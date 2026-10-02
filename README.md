@@ -79,10 +79,20 @@ hitch.exe send-keys -t <session-id> "Get-Location" Enter
 hitch.exe kill <session-id>
 ```
 
-Run `hitch.exe setup` for an explicit, confirmed installation of the PowerShell profiles and CMD wrapper. Setup backs up modified files and adds its wrapper directory to the user PATH; `hitch.exe setup --yes` skips only the confirmation prompt. The built-in `hitch.exe --skill` prints agent command instructions; managed skill installation is deferred.
+Run `hitch.exe setup` for an explicit, confirmed installation of the PowerShell profiles and CMD wrapper. Setup backs up modified files and adds its wrapper directory to the user PATH; `hitch.exe setup --yes` skips only the confirmation prompt. The built-in `hitch.exe --skill` prints agent instructions. Install the reusable skill separately with the npx skills CLI.
+
+## Install the agent skill
+
+The root `SKILL.md` is the source of truth for agent instructions. `hitch --skill` prints that same content. To install it for OpenCode with the [npx skills CLI](https://github.com/vercel-labs/skills):
+
+```powershell
+npx skills add kbohara315/hitch-cli-win --skill hitch --agent opencode
+```
+
+Omit `--agent opencode` to let the CLI detect installed agents, or add `--global` to install the skill for your user instead of the current project.
 
 Session metadata and bounded transcripts are stored under `%LOCALAPPDATA%\Hitch\sessions` while active, then removed when the managed shell ends. Dead session directories are pruned the next time Hitch lists sessions.
 
 ## Current implementation boundary
 
-The native ConPTY adapter, per-session host loop, terminal byte forwarding/resizing, current-user named-pipe protocol, session files, command/context/capture commands, guarded `send-keys`, shell setup, and cleanup path are implemented. This is an initial vertical slice; detailed parity features such as alternate-screen filtering, richer wait modes, and a managed agent-skill installer remain follow-up work.
+The native ConPTY adapter, per-session host loop, terminal byte forwarding/resizing, current-user named-pipe protocol, session files, command/context/capture commands, guarded `send-keys`, shell setup, and cleanup path are implemented. This is an initial vertical slice; detailed parity features such as alternate-screen filtering and richer wait modes remain follow-up work.

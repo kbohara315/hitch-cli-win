@@ -38,7 +38,7 @@ internal static class Program
         }
         if (invocation.Kind == CommandKind.Skill)
         {
-            Console.WriteLine(AgentInstructions);
+            Console.Write(GetAgentInstructions());
             return 0;
         }
 
@@ -239,7 +239,7 @@ internal static class Program
     {
         if (args.FirstOrDefault()?.Equals("skill", StringComparison.OrdinalIgnoreCase) == true)
         {
-            Console.WriteLine("The agent skill installer is deferred. Run `hitch --skill` to read the built-in agent instructions.");
+            Console.WriteLine("Install the Hitch agent skill with `npx skills add kbohara315/hitch-cli-win --skill hitch`, or run `hitch --skill` to print its instructions.");
             return 0;
         }
         var nonInteractive = args.Any(argument => argument.Equals("--yes", StringComparison.OrdinalIgnoreCase)
@@ -348,9 +348,11 @@ internal static class Program
         Console.WriteLine("  hitch --skill                   Print built-in agent instructions");
     }
 
-    private const string AgentInstructions = """
-        # Hitch agent commands
-
-        Run `hitch context` before launching long-running development processes. Use `hitch capture -t <id>` to inspect recent output and `hitch send-keys -t <id> ...` to provide input. Hitch blocks ordinary input while a foreground child process is running; use `--force` only when the input is intended for that process. Use `hitch status` to list live sessions and `hitch kill <id>` to end one.
-        """;
+    internal static string GetAgentInstructions()
+    {
+        using var stream = typeof(Program).Assembly.GetManifestResourceStream("Hitch.AgentSkills.hitch.SKILL.md")
+            ?? throw new InvalidOperationException("The embedded Hitch agent skill could not be found.");
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
 }

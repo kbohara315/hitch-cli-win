@@ -16,5 +16,6 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Hitch.Tests" />
+    <EmbeddedResource Include="..\..\SKILL.md" LogicalName="Hitch.AgentSkills.hitch.SKILL.md" />
   </ItemGroup>
 </Project>

@@ -39,7 +39,17 @@ Review the prompt and enter `y` to continue. Setup then:
 3. Adds the Hitch function to the Windows PowerShell 5.1 and PowerShell 7 profile files, preserving other profile content.
 4. Backs up files it replaces under `%LOCALAPPDATA%\Hitch\backups` and records the previous user PATH there if it changes it.
 
-Setup does not require administrator access. Restart open PowerShell and CMD windows after setup so they load the updated profile and PATH. The installer does not install the optional agent skill; `hitch --skill` prints the built-in agent instructions.
+Setup does not require administrator access. Restart open PowerShell and CMD windows after setup so they load the updated profile and PATH.
+
+## Install the agent skill
+
+The shell installer does not install agent skills. To install the repository's Hitch skill for OpenCode, run:
+
+```powershell
+npx skills add kbohara315/hitch-cli-win --skill hitch --agent opencode
+```
+
+Omit `--agent opencode` to let `npx skills` detect installed agents, or add `--global` for a user-wide skill. `hitch --skill` prints the same instructions without installing the skill.
 
 ## Verify the installation
 
