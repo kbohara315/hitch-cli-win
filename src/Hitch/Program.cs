@@ -242,7 +242,13 @@ internal static class Program
             Console.WriteLine("The agent skill installer is deferred. Run `hitch --skill` to read the built-in agent instructions.");
             return 0;
         }
-        await new ShellIntegrationInstaller().InstallAsync();
+        var nonInteractive = args.Any(argument => argument.Equals("--yes", StringComparison.OrdinalIgnoreCase)
+            || argument.Equals("-y", StringComparison.OrdinalIgnoreCase));
+        var installer = new ShellIntegrationInstaller();
+        if (nonInteractive)
+            await installer.InstallNonInteractiveAsync();
+        else
+            await installer.InstallAsync();
         return 0;
     }
 
@@ -338,7 +344,7 @@ internal static class Program
         Console.WriteLine("  hitch capture -t SESSION-ID     Print recent transcript output");
         Console.WriteLine("  hitch send-keys -t ID [--force] Send text or keys to a managed shell");
         Console.WriteLine("  hitch kill SESSION-ID           End a managed shell session");
-        Console.WriteLine("  hitch setup                     Install confirmed PowerShell/CMD integration");
+        Console.WriteLine("  hitch setup [--yes]             Install PowerShell/CMD integration (confirmed unless --yes)");
         Console.WriteLine("  hitch --skill                   Print built-in agent instructions");
     }
 

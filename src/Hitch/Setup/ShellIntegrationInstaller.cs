@@ -5,24 +5,38 @@ public sealed class ShellIntegrationInstaller
     private const string StartMarker = "# >>> hitch shell integration >>>";
     private const string EndMarker = "# <<< hitch shell integration <<<";
     private readonly string _root;
+    private readonly string _documentsDirectory;
+    private readonly Action<string> _addUserPath;
+    private readonly HashSet<string> _addedUserPaths = new(StringComparer.OrdinalIgnoreCase);
 
-    public ShellIntegrationInstaller(string? root = null)
+    public ShellIntegrationInstaller(string? root = null, string? documentsDirectory = null, Action<string>? addUserPath = null)
     {
         _root = root ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Hitch");
+        _documentsDirectory = documentsDirectory ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        _addUserPath = addUserPath ?? AddUserPath;
     }
 
-    public async Task<bool> InstallAsync(string? executablePath = null, CancellationToken cancellationToken = default)
+    public Task<bool> InstallAsync(string? executablePath = null, CancellationToken cancellationToken = default)
+        => InstallCoreAsync(executablePath, requireConfirmation: true, cancellationToken);
+
+    public Task<bool> InstallNonInteractiveAsync(string? executablePath = null, CancellationToken cancellationToken = default)
+        => InstallCoreAsync(executablePath, requireConfirmation: false, cancellationToken);
+
+    private async Task<bool> InstallCoreAsync(string? executablePath, bool requireConfirmation, CancellationToken cancellationToken)
     {
         var executable = executablePath ?? ResolveExecutable();
-        Console.WriteLine("Hitch setup will install PowerShell profile functions and a CMD wrapper, add Hitch to your user PATH, and back up files before changing them.");
-        Console.Write("Continue? [y/N] ");
-        var answer = Console.ReadLine();
-        if (!string.Equals(answer, "y", StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(answer, "yes", StringComparison.OrdinalIgnoreCase))
+        if (requireConfirmation)
         {
-            Console.WriteLine("No changes made.");
-            return false;
+            Console.WriteLine("Hitch setup will install PowerShell profile functions and a CMD wrapper, add Hitch to your user PATH, and back up files before changing them.");
+            Console.Write("Continue? [y/N] ");
+            var answer = Console.ReadLine();
+            if (!string.Equals(answer, "y", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(answer, "yes", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine("No changes made.");
+                return false;
+            }
         }
 
         var appDirectory = Path.Combine(_root, "app");
@@ -30,22 +44,24 @@ public sealed class ShellIntegrationInstaller
         Directory.CreateDirectory(appDirectory);
         Directory.CreateDirectory(binDirectory);
         var installedExecutable = Path.Combine(appDirectory, "hitch.exe");
-        BackupIfPresent(installedExecutable);
-        File.Copy(executable, installedExecutable, overwrite: true);
+        if (!FilesMatch(executable, installedExecutable))
+        {
+            BackupIfPresent(installedExecutable);
+            File.Copy(executable, installedExecutable, overwrite: true);
+        }
 
-        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
         var profiles = new[]
         {
-            Path.Combine(documents, "PowerShell", "Microsoft.PowerShell_profile.ps1"),
-            Path.Combine(documents, "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1")
+            Path.Combine(_documentsDirectory, "PowerShell", "Microsoft.PowerShell_profile.ps1"),
+            Path.Combine(_documentsDirectory, "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1")
         };
         foreach (var profile in profiles)
             InstallPowerShellProfile(profile, installedExecutable);
 
         var commandWrapper = Path.Combine(binDirectory, "hitch.cmd");
-        BackupIfPresent(commandWrapper);
-        await File.WriteAllTextAsync(commandWrapper, CreateCommandWrapper(installedExecutable), cancellationToken);
-        AddUserPath(binDirectory);
+        await WriteIfChangedAsync(commandWrapper, CreateCommandWrapper(installedExecutable), cancellationToken);
+        if (_addedUserPaths.Add(Path.GetFullPath(binDirectory)))
+            _addUserPath(binDirectory);
         Console.WriteLine("Shell integration installed. Restart open PowerShell/CMD windows before using the cwd-sync wrappers.");
         return true;
     }
@@ -54,9 +70,8 @@ public sealed class ShellIntegrationInstaller
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var oldText = File.Exists(path) ? File.ReadAllText(path) : string.Empty;
-        BackupIfPresent(path);
         var block = CreatePowerShellBlock(executable);
-        File.WriteAllText(path, ReplaceMarkedBlock(oldText, block));
+        WriteIfChanged(path, ReplaceMarkedBlock(oldText, block));
     }
 
     private static string CreatePowerShellBlock(string executable)
@@ -137,6 +152,41 @@ public sealed class ShellIntegrationInstaller
         var parent = Path.GetFileName(Path.GetDirectoryName(path)) ?? "root";
         var name = parent + "-" + Path.GetFileName(path) + "." + DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmssfff") + ".bak";
         File.Copy(path, Path.Combine(backupDirectory, name), overwrite: false);
+    }
+
+    private static bool FilesMatch(string source, string target)
+    {
+        if (!File.Exists(target))
+            return false;
+        using var sourceStream = File.OpenRead(source);
+        using var targetStream = File.OpenRead(target);
+        if (sourceStream.Length != targetStream.Length)
+            return false;
+        var left = new byte[81920];
+        var right = new byte[81920];
+        int read;
+        while ((read = sourceStream.Read(left, 0, left.Length)) > 0)
+        {
+            if (targetStream.Read(right, 0, read) != read || !left.AsSpan(0, read).SequenceEqual(right.AsSpan(0, read)))
+                return false;
+        }
+        return true;
+    }
+
+    private void WriteIfChanged(string path, string content)
+    {
+        if (File.Exists(path) && string.Equals(File.ReadAllText(path), content, StringComparison.Ordinal))
+            return;
+        BackupIfPresent(path);
+        File.WriteAllText(path, content);
+    }
+
+    private async Task WriteIfChangedAsync(string path, string content, CancellationToken cancellationToken)
+    {
+        if (File.Exists(path) && string.Equals(await File.ReadAllTextAsync(path, cancellationToken), content, StringComparison.Ordinal))
+            return;
+        BackupIfPresent(path);
+        await File.WriteAllTextAsync(path, content, cancellationToken);
     }
 
     private static string ReplaceMarkedBlock(string content, string block)

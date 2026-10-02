@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Locate MSVC x64 linker
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (-not (Test-Path -LiteralPath $vswhere)) { throw "Visual Studio locator not found: $vswhere" }
+          $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $installation) { throw 'No Visual Studio installation with the MSVC x64 tools was found.' }
+          $vcRoot = Join-Path $installation 'VC\Tools\MSVC'
+          $linker = Get-ChildItem -LiteralPath $vcRoot -Directory | Sort-Object { [version]($_.Name -split '\\+')[0] } -Descending | ForEach-Object { Join-Path $_.FullName 'bin\Hostx64\x64' } | Where-Object { Test-Path (Join-Path $_ 'link.exe') } | Select-Object -First 1
+          if (-not $linker) { throw "MSVC x64 linker (link.exe) not found under $vcRoot." }
+          "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $linker | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Run tests
+        run: dotnet test Hitch.sln -c Release
+      - name: Publish Native AOT executable
+        run: dotnet publish src/Hitch/Hitch.csproj -c Release -p:PublishProfile=NativeAot -o artifacts/release
+      - name: Smoke-test Native AOT executable
+        shell: pwsh
+        run: |
+          $executable = Join-Path (Resolve-Path 'artifacts/release').Path 'hitch.exe'
+          if (-not (Test-Path -LiteralPath $executable)) { throw "Published executable not found: $executable" }
+          & $executable --version
+          if ($LASTEXITCODE -ne 0) { throw "hitch.exe --version failed with exit code $LASTEXITCODE." }
+          & $executable --help
+          if ($LASTEXITCODE -ne 0) { throw "hitch.exe --help failed with exit code $LASTEXITCODE." }
+      - name: Create SHA256 checksum
+        shell: pwsh
+        run: (Get-FileHash artifacts/release/hitch.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content artifacts/release/hitch.exe.sha256 -NoNewline
+      - name: Publish GitHub release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" artifacts/release/hitch.exe artifacts/release/hitch.exe.sha256 --title "${{ github.ref_name }}" --generate-notes

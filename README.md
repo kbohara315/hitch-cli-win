@@ -43,6 +43,18 @@ $env:PATH = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer;${env:Pr
 
 If the MSVC version or Visual Studio edition differs, use the corresponding installed `Installer` directory and MSVC `bin\Hostx64\x64` directory. `vswhere.exe` must be discoverable on `PATH` for the Native AOT linker step.
 
+## Install with PowerShell
+
+On Windows 10 version 1809 or newer (Windows x64), run this in PowerShell:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "`$script = (Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/kbohara315/hitch-cli-win/main/scripts/install.ps1').Content; Invoke-Expression `$script"
+```
+
+The installer downloads the latest Native AOT release and its SHA256 checksum from GitHub, verifies the executable, then installs it for the current user under `%LOCALAPPDATA%\Hitch`. It configures the existing PowerShell profiles, CMD wrapper, and user PATH, preserving backups. No .NET installation or administrator access is needed. Open a fresh PowerShell or Command Prompt window and type `hitch`.
+
+Releases are created by pushing a `v*` version tag; CI publishes `hitch.exe` and `hitch.exe.sha256`.
+
 ## Try it
 
 ```powershell
@@ -67,7 +79,7 @@ hitch.exe send-keys -t <session-id> "Get-Location" Enter
 hitch.exe kill <session-id>
 ```
 
-Run `hitch.exe setup` for an explicit, confirmed installation of the PowerShell profiles and CMD wrapper. Setup backs up modified files and adds its wrapper directory to the user PATH. The built-in `hitch.exe --skill` prints agent command instructions; managed skill installation is deferred.
+Run `hitch.exe setup` for an explicit, confirmed installation of the PowerShell profiles and CMD wrapper. Setup backs up modified files and adds its wrapper directory to the user PATH; `hitch.exe setup --yes` skips only the confirmation prompt. The built-in `hitch.exe --skill` prints agent command instructions; managed skill installation is deferred.
 
 Session metadata and bounded transcripts are stored under `%LOCALAPPDATA%\Hitch\sessions` while active, then removed when the managed shell ends. Dead session directories are pruned the next time Hitch lists sessions.
 

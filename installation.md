@@ -10,6 +10,16 @@ This guide installs Hitch for the **current Windows user** and makes the command
 
 ## Install from this repository
 
+For the one-command install of the latest release, open PowerShell on Windows x64 (Windows 10 version 1809 or newer) and run:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "`$script = (Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/kbohara315/hitch-cli-win/main/scripts/install.ps1').Content; Invoke-Expression `$script"
+```
+
+It downloads and SHA256-verifies the self-contained Native AOT release, installs for the current user in `%LOCALAPPDATA%\Hitch`, and reuses Hitch's setup to configure PowerShell/CMD integration and user PATH with backups. No .NET runtime/SDK or administrator access is required. Open a fresh shell and type `hitch`.
+
+The source-build steps below remain available:
+
 Open PowerShell in the repository root and publish the self-contained executable:
 
 ```powershell
