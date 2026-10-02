@@ -1,0 +1,243 @@
+using System.Diagnostics;
+using Hitch.Native;
+
+namespace Hitch.Sessions;
+
+public sealed class SessionHost(SessionStore store)
+{
+    public async Task<int> RunAsync(string shell, string shellArguments, CancellationToken cancellationToken = default)
+    {
+        var id = store.AllocateId();
+        var pipeName = "hitch-" + id;
+        var startedAt = DateTimeOffset.UtcNow;
+        var syncPath = Environment.GetEnvironmentVariable("HITCH_CWD_SYNC_FILE");
+        var cwd = Environment.CurrentDirectory;
+        var size = ConsoleModeScope.GetSize();
+        var redirectShellOutput = Console.IsOutputRedirected;
+        using var terminalMode = ConsoleModeScope.Enter();
+        var hostExecutable = ResolveHostExecutable();
+        var cmdShimPath = Path.Combine(store.SessionDirectory(id), "hitch.cmd");
+        await File.WriteAllTextAsync(cmdShimPath, "@echo off\r\n\"%HITCH_EXE%\" %*\r\nexit /b %ERRORLEVEL%\r\n", cancellationToken);
+
+        if (IsPowerShell(shell))
+        {
+            var bootstrapPath = Path.Combine(store.SessionDirectory(id), "prompt.ps1");
+            await File.WriteAllTextAsync(bootstrapPath, ManagedShellPrompt.PowerShellBootstrap, cancellationToken);
+            shellArguments += $" -NoExit -File \"{bootstrapPath}\"";
+        }
+
+        var oldSession = Environment.GetEnvironmentVariable("HITCH_SESSION");
+        var oldPipe = Environment.GetEnvironmentVariable("HITCH_PIPE");
+        var oldHostPid = Environment.GetEnvironmentVariable("HITCH_HOST_PID");
+        var oldExecutable = Environment.GetEnvironmentVariable("HITCH_EXE");
+        var oldPath = Environment.GetEnvironmentVariable("PATH");
+        var oldPrompt = Environment.GetEnvironmentVariable("PROMPT");
+        Environment.SetEnvironmentVariable("HITCH_SESSION", id);
+        Environment.SetEnvironmentVariable("HITCH_PIPE", pipeName);
+        Environment.SetEnvironmentVariable("HITCH_HOST_PID", Environment.ProcessId.ToString());
+        Environment.SetEnvironmentVariable("HITCH_EXE", hostExecutable);
+        Environment.SetEnvironmentVariable("PATH", store.SessionDirectory(id) + Path.PathSeparator + oldPath);
+        if (Path.GetFileNameWithoutExtension(shell).Equals("cmd", StringComparison.OrdinalIgnoreCase))
+            Environment.SetEnvironmentVariable("PROMPT", "$E]7;file://localhost/$P$E\\$S$E[32m#" + id + "$E[0m$S" + (oldPrompt ?? "$P$G"));
+        try
+        {
+            await using var shellSession = ConPtySession.Start(
+                shell,
+                shellArguments,
+                cwd,
+                size.Columns,
+                size.Rows,
+                redirectStandardOutput: redirectShellOutput);
+            var record = new SessionRecord(id, Environment.ProcessId, shell, cwd, pipeName, startedAt);
+            store.Save(record);
+            var outputLog = new BoundedOutputLog(store.OutputPath(id));
+            var activeLog = new BoundedOutputLog(store.ActiveOutputPath(id), 8 * 1024 * 1024, 7 * 1024 * 1024);
+            var stop = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var pipeServer = new SessionPipeServer(pipeName, id, store, shellSession, outputLog, activeLog,
+                () =>
+                {
+                    shellSession.KillTree();
+                    stop.TrySetResult();
+                });
+            Console.WriteLine($"Hitch session {id} · {Path.GetFileName(shell)}");
+            Console.WriteLine("Agent commands can now inspect and control this session. Press Ctrl+\\ or run `hitch off` to stop it.");
+
+            var outputTask = PumpOutputAsync(shellSession, outputLog, activeLog, store, id, shutdown.Token);
+            var inputTask = PumpInputAsync(shellSession, store, id, shutdown.Token);
+            var pipeTask = pipeServer.RunAsync(shutdown.Token);
+            var monitorTask = MonitorStateAsync(shellSession, store, id, activeLog, shutdown.Token);
+            var resizeTask = MonitorResizeAsync(shellSession, shutdown.Token);
+            var exitTask = shellSession.WaitForExitAsync(shutdown.Token);
+
+            var completed = await Task.WhenAny(exitTask, inputTask, stop.Task);
+            var exitCode = completed == exitTask ? await exitTask : 0;
+            if (!shellSession.HasExited)
+                shellSession.KillTree();
+
+            try { await exitTask.WaitAsync(TimeSpan.FromSeconds(2), CancellationToken.None); }
+            catch (Exception ex) when (ex is OperationCanceledException or TimeoutException or InvalidOperationException) { }
+            shellSession.ClosePseudoConsole();
+            try { await outputTask.WaitAsync(TimeSpan.FromSeconds(2), CancellationToken.None); }
+            catch (Exception ex) when (ex is OperationCanceledException or TimeoutException or IOException) { }
+            shutdown.Cancel();
+            try
+            {
+                // Console input reads can remain pending after cancellation on synchronous handles;
+                // the host exits immediately afterward, so don't hold session shutdown open for it.
+                await Task.WhenAll(pipeTask, monitorTask, resizeTask)
+                    .WaitAsync(TimeSpan.FromSeconds(2), CancellationToken.None);
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or TimeoutException or IOException) { }
+            await shellSession.DisposeAsync();
+
+            var finalState = store.ReadState(id);
+            if (!string.IsNullOrWhiteSpace(syncPath) && Directory.Exists(finalState.CurrentDirectory))
+                await File.WriteAllTextAsync(syncPath, finalState.CurrentDirectory, cancellationToken);
+            return exitCode;
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("HITCH_SESSION", oldSession);
+            Environment.SetEnvironmentVariable("HITCH_PIPE", oldPipe);
+            Environment.SetEnvironmentVariable("HITCH_HOST_PID", oldHostPid);
+            Environment.SetEnvironmentVariable("HITCH_EXE", oldExecutable);
+            Environment.SetEnvironmentVariable("PATH", oldPath);
+            Environment.SetEnvironmentVariable("PROMPT", oldPrompt);
+            store.Delete(id);
+        }
+    }
+
+    private static bool IsPowerShell(string executable)
+    {
+        var name = Path.GetFileNameWithoutExtension(executable);
+        return name.Equals("powershell", StringComparison.OrdinalIgnoreCase)
+               || name.Equals("pwsh", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ResolveHostExecutable()
+    {
+        var processPath = Environment.ProcessPath;
+        if (processPath is not null
+            && Path.GetFileNameWithoutExtension(processPath).Equals("hitch", StringComparison.OrdinalIgnoreCase))
+            return processPath;
+        var appHost = Path.Combine(AppContext.BaseDirectory, "hitch.exe");
+        if (File.Exists(appHost))
+            return appHost;
+        throw new InvalidOperationException("Could not locate hitch.exe to expose the session commands to the managed shell.");
+    }
+
+    private static async Task PumpOutputAsync(
+        IConPtySession shell,
+        BoundedOutputLog outputLog,
+        BoundedOutputLog activeLog,
+        SessionStore store,
+        string id,
+        CancellationToken cancellationToken)
+    {
+        var stdout = Console.OpenStandardOutput();
+        var parser = new CwdMarkerParser();
+        await shell.PumpOutputAsync(async bytes =>
+        {
+            await stdout.WriteAsync(bytes, cancellationToken);
+            await stdout.FlushAsync(cancellationToken);
+            await outputLog.AppendAsync(bytes, cancellationToken);
+            var cwd = parser.Observe(bytes.Span);
+            if (cwd is not null)
+            {
+                var state = store.ReadState(id);
+                store.SaveState(id, state with
+                {
+                    CurrentDirectory = cwd,
+                    CommandRunning = false,
+                    ActiveCommand = null,
+                    AtPrompt = true,
+                    UpdatedAt = DateTimeOffset.UtcNow
+                });
+            }
+            var current = store.ReadState(id);
+            if (current.CommandRunning)
+                await activeLog.AppendAsync(bytes, cancellationToken);
+        }, cancellationToken);
+    }
+
+    private static async Task PumpInputAsync(IConPtySession shell, SessionStore store, string sessionId, CancellationToken cancellationToken)
+    {
+        var stdin = Console.OpenStandardInput();
+        var buffer = new byte[4096];
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var read = await stdin.ReadAsync(buffer, cancellationToken);
+                if (read == 0)
+                    return;
+                if (buffer.AsSpan(0, read).Contains((byte)0x1c))
+                {
+                    shell.KillTree();
+                    return;
+                }
+                if (buffer.AsSpan(0, read).Contains((byte)'\r'))
+                    MarkCommandSubmitted(store, sessionId);
+                await shell.WriteInputAsync(buffer.AsMemory(0, read), cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (IOException) { }
+    }
+
+    private static async Task MonitorStateAsync(
+        IConPtySession shell,
+        SessionStore store,
+        string id,
+        BoundedOutputLog activeLog,
+        CancellationToken cancellationToken)
+    {
+        bool wasRunning = false;
+        while (!cancellationToken.IsCancellationRequested && !shell.HasExited)
+        {
+            var active = ProcessTreeInspector.GetDescendantNames(shell.ProcessId)
+                .FirstOrDefault(name => !name.Equals("hitch", StringComparison.OrdinalIgnoreCase)
+                                        && !name.Equals("conhost", StringComparison.OrdinalIgnoreCase));
+            var old = store.ReadState(id);
+            var running = active is not null || !old.AtPrompt;
+            if (running && !wasRunning)
+                await File.WriteAllBytesAsync(store.ActiveOutputPath(id), [], cancellationToken);
+            store.SaveState(id, old with
+            {
+                CommandRunning = running,
+                ActiveCommand = active ?? (running ? old.ActiveCommand ?? "shell input" : null),
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
+            wasRunning = running;
+            await Task.Delay(400, cancellationToken);
+        }
+    }
+
+    private static void MarkCommandSubmitted(SessionStore store, string id)
+    {
+        var state = store.ReadState(id);
+        store.SaveState(id, state with
+        {
+            CommandRunning = true,
+            ActiveCommand = "shell command",
+            AtPrompt = false,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+    }
+
+    private static async Task MonitorResizeAsync(IConPtySession shell, CancellationToken cancellationToken)
+    {
+        var previous = ConsoleModeScope.GetSize();
+        while (!cancellationToken.IsCancellationRequested && !shell.HasExited)
+        {
+            await Task.Delay(250, cancellationToken);
+            var current = ConsoleModeScope.GetSize();
+            if (current != previous)
+            {
+                shell.Resize(current.Columns, current.Rows);
+                previous = current;
+            }
+        }
+    }
+}

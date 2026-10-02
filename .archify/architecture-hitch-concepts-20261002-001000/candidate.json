@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Hitch — implementation concepts",
+    "output": ".archify/architecture-hitch-concepts-20261002-001000/hitch-concepts.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/maxktz/hitch.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "bcbfca2602259507245e776e366666fee89f4d6b"
+    }
+  },
+  "components": [
+    { "id": "human", "type": "external", "label": "Developer", "sublabel": "normal interactive shell", "pos": [40, 410], "size": [155, 68], "sources": [{ "path": "src/main.rs", "line": 360, "end_line": 423 }] },
+    { "id": "agent", "type": "external", "label": "Coding agent", "sublabel": "uses Hitch CLI commands", "pos": [40, 90], "size": [155, 68], "sources": [{ "path": "src/cli.rs", "line": 31, "end_line": 45 }] },
+    { "id": "cli", "type": "backend", "label": "Hitch CLI", "sublabel": "one executable; human + agent entry points", "pos": [300, 260], "size": [205, 76], "sources": [{ "path": "src/main.rs", "line": 178, "end_line": 212 }, { "path": "src/cli.rs", "line": 19, "end_line": 45 }] },
+    { "id": "master", "type": "backend", "label": "Session master", "sublabel": "coordinator + select-based event loop", "pos": [650, 260], "size": [225, 76], "sources": [{ "path": "src/main.rs", "line": 454, "end_line": 588 }] },
+    { "id": "pty-shell", "type": "backend", "label": "PTY + shell process", "sublabel": "forkpty gives programs terminal semantics", "pos": [1050, 260], "size": [220, 76], "sources": [{ "path": "src/main.rs", "line": 733, "end_line": 770 }] },
+    { "id": "output-pipeline", "type": "backend", "label": "Output pipeline", "sublabel": "filter → transcript + client broadcast", "pos": [650, 500], "size": [250, 76], "sources": [{ "path": "src/main.rs", "line": 590, "end_line": 661 }] },
+    { "id": "files", "type": "database", "label": "Local session files", "sublabel": "metadata · live state · bounded logs", "pos": [1050, 500], "size": [220, 76], "sources": [{ "path": "src/main.rs", "line": 360, "end_line": 423 }, { "path": "src/main.rs", "line": 958, "end_line": 991 }, { "path": "src/models.rs", "line": 3, "end_line": 44 }] }
+  ],
+  "connections": [
+    { "id": "developer-cli", "from": "human", "to": "cli", "label": "hitch starts sharing", "variant": "emphasis" },
+    { "id": "agent-cli", "from": "agent", "to": "cli", "label": "context / capture / send-keys" },
+    { "id": "cli-master", "from": "cli", "to": "master", "label": "launches master / local IPC", "variant": "emphasis" },
+    { "id": "master-pty", "from": "master", "to": "pty-shell", "label": "PTY I/O + process tracking", "variant": "emphasis" },
+    { "id": "pty-output", "from": "pty-shell", "to": "output-pipeline", "label": "output bytes" },
+    { "id": "master-output", "from": "master", "to": "output-pipeline", "label": "coordinates capture / broadcast" },
+    { "id": "pipeline-files", "from": "output-pipeline", "to": "files", "label": "writes bounded logs" },
+    { "id": "cli-files", "from": "cli", "to": "files", "label": "context reads local state / logs" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Terminal virtualization", "items": ["A pseudo-terminal (PTY) makes the child shell behave as if it were attached to a real terminal.", "Hitch can mediate input, output, window-size changes, and detach without replacing the user's shell experience."] },
+    { "dot": "emerald", "title": "Local client–server + event loop", "items": ["The long-lived session master is the local server; CLI operations connect through a Unix-domain socket.", "A select-based loop watches the listener, PTY, and connected clients, so one coordinator handles concurrent readiness events."] },
+    { "dot": "violet", "title": "Observability through a data pipeline", "items": ["PTY bytes are transformed for display and separately filtered before they are logged.", "File-backed session metadata and bounded transcripts let short-lived agent commands inspect a live session without owning its process."] },
+    { "dot": "amber", "title": "Design trade-offs to notice", "items": ["Local-only IPC and files keep the core service lightweight; this design is aimed at one host, not remote multi-user access.", "The control plane (CLI / socket messages) is distinct from the data plane (interactive PTY bytes).", "A single master centralizes lifecycle and state, while output compaction bounds disk usage; process failure recovery is not depicted as durable service supervision."] }
+  ]
+}

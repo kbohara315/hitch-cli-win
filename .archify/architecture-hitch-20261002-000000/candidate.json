@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Hitch — terminal sharing architecture",
+    "output": ".archify/architecture-hitch-20261002-000000/hitch.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/maxktz/hitch.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "bcbfca2602259507245e776e366666fee89f4d6b"
+    }
+  },
+  "components": [
+    { "id": "user", "type": "external", "label": "Human in shell", "sublabel": "starts hitch; uses the native terminal", "pos": [40, 300], "size": [160, 72], "sources": [{ "path": "src/main.rs", "line": 360, "end_line": 451 }] },
+    { "id": "hitch-cli", "type": "backend", "label": "Hitch CLI", "sublabel": "Rust command router", "pos": [270, 300], "size": [175, 72], "sources": [{ "path": "src/main.rs", "line": 178, "end_line": 212 }, { "path": "src/cli.rs", "line": 19, "end_line": 45 }] },
+    { "id": "agent", "type": "external", "label": "Coding agent", "sublabel": "context / capture / send-keys", "pos": [280, 85], "size": [175, 72], "sources": [{ "path": "src/cli.rs", "line": 31, "end_line": 45 }] },
+    { "id": "master", "type": "backend", "label": "Session master", "sublabel": "forked coordinator + Unix socket", "pos": [640, 300], "size": [190, 72], "sources": [{ "path": "src/main.rs", "line": 360, "end_line": 423 }, { "path": "src/main.rs", "line": 454, "end_line": 588 }] },
+    { "id": "shell", "type": "backend", "label": "Interactive shell", "sublabel": "child process in PTY", "pos": [1000, 300], "size": [175, 72], "sources": [{ "path": "src/main.rs", "line": 663, "end_line": 701 }, { "path": "src/main.rs", "line": 708, "end_line": 770 }] },
+    { "id": "session-store", "type": "database", "label": "Session files", "sublabel": "session.json · state.json · output logs", "pos": [640, 485], "size": [205, 72], "sources": [{ "path": "src/main.rs", "line": 255, "end_line": 278 }, { "path": "src/models.rs", "line": 3, "end_line": 44 }] },
+    { "id": "agent-api", "type": "backend", "label": "Agent command handlers", "sublabel": "context / capture / send-keys / kill", "pos": [280, 540], "size": [210, 72], "sources": [{ "path": "src/main.rs", "line": 1164, "end_line": 1210 }, { "path": "src/main.rs", "line": 1459, "end_line": 1524 }, { "path": "src/send_keys.rs", "line": 25, "end_line": 66 }] },
+    { "id": "setup", "type": "backend", "label": "Setup & skill installer", "sublabel": "shell integration + optional agent skill", "pos": [40, 85], "size": [195, 72], "sources": [{ "path": "src/setup.rs", "line": 17, "end_line": 47 }, { "path": "src/setup.rs", "line": 239, "end_line": 323 }] }
+  ],
+  "connections": [
+    { "id": "human-start", "from": "user", "to": "hitch-cli", "label": "hitch / on", "variant": "emphasis" },
+    { "id": "cli-master", "from": "hitch-cli", "to": "master", "label": "forks master; creates session", "variant": "emphasis" },
+    { "id": "master-pty-shell", "from": "master", "to": "shell", "label": "PTY: forwards input and output", "variant": "emphasis" },
+    { "id": "master-files", "from": "master", "to": "session-store", "label": "persists metadata, state, transcript", "fromSide": "bottom", "toSide": "top" },
+    { "id": "agent-cli", "from": "agent", "to": "agent-api", "label": "CLI commands", "fromSide": "bottom", "toSide": "top" },
+    { "id": "agent-api-files", "from": "agent-api", "to": "session-store", "label": "reads session state and logs", "fromSide": "right", "toSide": "left" },
+    { "id": "agent-api-socket", "from": "agent-api", "to": "master", "label": "Unix socket: send keys / control", "fromSide": "top", "toSide": "bottom" },
+    { "id": "setup-user", "from": "user", "to": "setup", "label": "setup wizard", "fromSide": "top", "toSide": "bottom" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Core runtime", "items": ["A master process owns a PTY-backed shell and accepts local Unix-socket clients.", "The foreground terminal attaches as a client; disconnecting its attached client ends the shell session."] },
+    { "dot": "emerald", "title": "Agent interface", "items": ["Agents use CLI commands rather than a separate network service.", "Context and capture read session files; send-keys validates/encodes input then sends it to the session socket."] },
+    { "dot": "amber", "title": "Local state & setup", "items": ["Session metadata, live state, and bounded terminal output are stored in local files.", "Setup can install shell prompt integration and an optional embedded SKILL.md through npx skills."] }
+  ]
+}

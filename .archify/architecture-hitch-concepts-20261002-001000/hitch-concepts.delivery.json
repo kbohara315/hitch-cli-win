@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "1a7ce041-8b59-424f-8b54-da88625b974a",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "C:\\Users\\ACER\\Documents\\Endeavor\\hobby\\hitch-cli-win\\.archify\\architecture-hitch-concepts-20261002-001000\\candidate.json",
+  "output": "C:\\Users\\ACER\\Documents\\Endeavor\\hobby\\hitch-cli-win\\.archify\\architecture-hitch-concepts-20261002-001000\\hitch-concepts.html",
+  "specification": {
+    "sha256": "aaab0f4d392f55e0bcfd5780b2365fbc02aa697f1a4b1f917cf11fb1a5646fa0",
+    "bytes": 4560
+  },
+  "artifact": {
+    "sha256": "a861b1cdd98ed9a9e49dc30088b1efeed44efabbcbd573ede9bbaa044c3aefe8",
+    "bytes": 761646
+  }
+}

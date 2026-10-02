@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Hitch — detailed software architecture",
+    "output": ".archify/architecture-hitch-deep-dive-20261002-003000/hitch-deep-dive.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/maxktz/hitch.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "bcbfca2602259507245e776e366666fee89f4d6b"
+    }
+  },
+  "components": [
+    { "id": "developer", "type": "external", "label": "Developer terminal", "sublabel": "starts / stops sharing", "pos": [40, 300], "size": [170, 68], "sources": [{ "path": "src/main.rs", "line": 360, "end_line": 424 }] },
+    { "id": "agent", "type": "external", "label": "Coding agent", "sublabel": "uses context / capture / send-keys", "pos": [40, 570], "size": [190, 68], "sources": [{ "path": "src/cli.rs", "line": 19, "end_line": 45 }] },
+    { "id": "cli-parser", "type": "backend", "label": "CLI definition", "sublabel": "clap commands + arguments", "pos": [260, 400], "size": [205, 72], "sources": [{ "path": "src/cli.rs", "line": 4, "end_line": 45 }, { "path": "src/cli.rs", "line": 61, "end_line": 140 }] },
+    { "id": "dispatcher", "type": "backend", "label": "Process entry + dispatcher", "sublabel": "main.rs · run() routes each command", "pos": [560, 400], "size": [230, 72], "sources": [{ "path": "src/main.rs", "line": 167, "end_line": 213 }] },
+    { "id": "setup-module", "type": "backend", "label": "Setup module", "sublabel": "shell integration · skill · update notice", "pos": [560, 100], "size": [230, 72], "sources": [{ "path": "src/setup.rs", "line": 231, "end_line": 323 }, { "path": "src/setup.rs", "line": 332, "end_line": 405 }] },
+    { "id": "session-bootstrap", "type": "backend", "label": "Session bootstrap", "sublabel": "allocates ID, paths, record, socket, master", "pos": [850, 400], "size": [245, 72], "sources": [{ "path": "src/main.rs", "line": 341, "end_line": 424 }] },
+    { "id": "master-loop", "type": "backend", "label": "Session master loop", "sublabel": "select() over listener, PTY, and clients", "pos": [1170, 400], "size": [230, 72], "sources": [{ "path": "src/main.rs", "line": 454, "end_line": 588 }] },
+    { "id": "pty-shell", "type": "backend", "label": "PTY + child shell", "sublabel": "forkpty() and shell exec", "pos": [1470, 300], "size": [200, 72], "sources": [{ "path": "src/main.rs", "line": 733, "end_line": 770 }] },
+    { "id": "socket-protocol", "type": "messagebus", "label": "Unix socket protocol", "sublabel": "local framed packets: type + length + payload", "pos": [1170, 100], "size": [240, 72], "sources": [{ "path": "src/main.rs", "line": 70, "end_line": 78 }, { "path": "src/main.rs", "line": 1120, "end_line": 1147 }, { "path": "src/main.rs", "line": 772, "end_line": 803 }] },
+    { "id": "terminal-attach", "type": "backend", "label": "Attached terminal client", "sublabel": "raw terminal mode · stdin/stdout bridge", "pos": [1460, 100], "size": [220, 72], "sources": [{ "path": "src/main.rs", "line": 805, "end_line": 878 }] },
+    { "id": "command-tracker", "type": "backend", "label": "Command + session tracker", "sublabel": "cwd, foreground process, active command, timing", "pos": [1470, 550], "size": [250, 72], "sources": [{ "path": "src/main.rs", "line": 80, "end_line": 164 }, { "path": "src/main.rs", "line": 663, "end_line": 701 }] },
+    { "id": "output-pipeline", "type": "backend", "label": "PTY output pipeline", "sublabel": "title / alt-screen filters → log + broadcast", "pos": [1170, 550], "size": [260, 72], "sources": [{ "path": "src/main.rs", "line": 590, "end_line": 661 }, { "path": "src/filters.rs", "line": 30, "end_line": 57 }, { "path": "src/filters.rs", "line": 180, "end_line": 274 }] },
+    { "id": "agent-commands", "type": "backend", "label": "Agent command handlers", "sublabel": "context · send-keys · capture · status · kill", "pos": [560, 650], "size": [250, 72], "sources": [{ "path": "src/main.rs", "line": 1164, "end_line": 1222 }, { "path": "src/main.rs", "line": 1459, "end_line": 1543 }, { "path": "src/send_keys.rs", "line": 25, "end_line": 66 }] },
+    { "id": "models", "type": "backend", "label": "Data models", "sublabel": "SessionRecord · SessionState · UpdateCache", "pos": [850, 820], "size": [235, 68], "sources": [{ "path": "src/models.rs", "line": 1, "end_line": 44 }] },
+    { "id": "session-files", "type": "database", "label": "Session filesystem", "sublabel": "session.json · state.json · logs", "pos": [1170, 820], "size": [270, 72], "sources": [{ "path": "src/main.rs", "line": 360, "end_line": 398 }, { "path": "src/main.rs", "line": 958, "end_line": 991 }, { "path": "src/main.rs", "line": 1549, "end_line": 1559 }] },
+    { "id": "rendering", "type": "backend", "label": "Transcript renderer", "sublabel": "terminal control bytes → readable text", "pos": [560, 820], "size": [240, 68], "sources": [{ "path": "src/render.rs", "line": 1, "end_line": 128 }, { "path": "src/main.rs", "line": 1616, "end_line": 1643 }] },
+    { "id": "style", "type": "backend", "label": "Output styling", "sublabel": "TTY-aware color + message formatting", "pos": [260, 820], "size": [220, 68], "sources": [{ "path": "src/style.rs", "line": 11, "end_line": 81 }] }
+  ],
+  "connections": [
+    { "id": "developer-cli", "from": "developer", "to": "cli-parser", "label": "hitch / on / off" },
+    { "id": "agent-cli", "from": "agent", "to": "cli-parser", "label": "context / capture / send-keys" },
+    { "id": "cli-dispatch", "from": "cli-parser", "to": "dispatcher", "label": "dispatch" },
+    { "id": "dispatch-setup", "from": "dispatcher", "to": "setup-module", "label": "setup / first-run integration", "fromSide": "top", "toSide": "bottom" },
+    { "id": "dispatch-start", "from": "dispatcher", "to": "session-bootstrap" },
+    { "id": "dispatch-agent", "from": "dispatcher", "to": "agent-commands", "label": "agent and status commands", "fromSide": "bottom", "toSide": "top" },
+    { "id": "bootstrap-master", "from": "session-bootstrap", "to": "master-loop" },
+    { "id": "master-shell", "from": "master-loop", "to": "pty-shell" },
+    { "id": "master-socket", "from": "master-loop", "to": "socket-protocol", "label": "accepts clients; handles packet types", "fromSide": "top", "toSide": "bottom" },
+    { "id": "socket-attach", "from": "socket-protocol", "to": "terminal-attach" },
+    { "id": "pty-tracker", "from": "pty-shell", "to": "command-tracker", "label": "foreground process + cwd", "fromSide": "bottom", "toSide": "right" },
+    { "id": "pty-output", "from": "pty-shell", "to": "output-pipeline", "label": "terminal output bytes", "fromSide": "bottom", "toSide": "right" },
+    { "id": "tracker-store", "from": "command-tracker", "to": "session-files", "label": "writes live state + active output" },
+    { "id": "output-store", "from": "output-pipeline", "to": "session-files", "label": "appends bounded transcript" },
+    { "id": "models-store", "from": "models", "to": "session-files" },
+    { "id": "commands-store", "from": "agent-commands", "to": "session-files" },
+    { "id": "commands-render", "from": "agent-commands", "to": "rendering", "label": "renders captured transcript" },
+    { "id": "commands-style", "from": "agent-commands", "to": "style", "label": "formats CLI output" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Startup and process lifetime", "items": ["run() dispatches commands; no command defaults to starting a shared terminal.", "Startup prepares a session directory and Unix socket, writes session metadata, forks the master, then attaches the original terminal.", "The master creates the PTY-backed shell. When the last attached client detaches after attachment, the loop signals the shell and exits."] },
+    { "dot": "emerald", "title": "Socket message protocol", "items": ["Packets have a one-byte type, a four-byte big-endian payload length, then payload bytes.", "Message types cover input push, attach, detach, terminal resize, and stopping a whole session.", "The socket is local Unix-domain IPC; this implementation is not a remote network API."] },
+    { "dot": "violet", "title": "Command tracking + persisted state", "items": ["The master polls the PTY foreground process group to infer current directory and whether a command is running.", "SessionState is serialized to state.json; session.json carries the session ID, paths, shell, and process metadata.", "output.log retains a bounded transcript; active-output.log captures output while a foreground command is running."] },
+    { "dot": "amber", "title": "Output processing and agent reads", "items": ["Raw PTY output is broadcast to attached clients after terminal-title rewriting; the transcript path separately strips titles and filters alternate-screen output.", "render.rs interprets common terminal control sequences and reconstructs readable text for context/capture output.", "send-keys resolves a session, guards input while a process is running unless --force (with control-key/interrupt exceptions), sends encoded bytes, and can wait for output or completion."] },
+    { "dot": "rose", "title": "Other code pieces", "items": ["setup.rs edits shell startup files for zsh/bash/fish, can install the embedded SKILL.md using npx skills, and caches npm update checks.", "style.rs gates ANSI colors on TTY detection and NO_COLOR; models.rs defines serialized record/cache/state shapes.", "Cargo.toml dependencies: clap (CLI), inquire (setup prompt), libc (PTY/process/terminal APIs), minreq (npm lookup), serde + serde_json (state)."] }
+  ]
+}

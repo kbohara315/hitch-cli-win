@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "e2824bd7-90a2-43e3-9595-b1dfdff8ae63",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "C:\\Users\\ACER\\Documents\\Endeavor\\hobby\\hitch-cli-win\\.archify\\architecture-hitch-deep-dive-20261002-003000\\candidate.json",
+  "output": "C:\\Users\\ACER\\Documents\\Endeavor\\hobby\\hitch-cli-win\\.archify\\architecture-hitch-deep-dive-20261002-003000\\hitch-deep-dive.html",
+  "specification": {
+    "sha256": "1741ead631349777827e9a29e9e6c48a3f0860ce0698d338c7727f4f9a41dbbd",
+    "bytes": 9576
+  },
+  "artifact": {
+    "sha256": "fda0ad980b5bd42a97f5db3d37e5bed34a9c430c8e9c8410d851349f1517157d",
+    "bytes": 788084
+  }
+}
