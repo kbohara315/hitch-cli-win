@@ -19,12 +19,15 @@ public sealed class SessionPipeServerTests
         var processStart = Process.GetCurrentProcess().StartTime.ToUniversalTime();
         store.Save(new SessionRecord(id, Environment.ProcessId, "cmd.exe", root, pipeName,
             new DateTimeOffset(processStart)));
-        store.SaveState(id, new SessionState(true, "node", root, DateTimeOffset.UtcNow, AtPrompt: false));
+        var activity = new SessionActivityTracker(new SessionState(true, "node", root, DateTimeOffset.UtcNow, AtPrompt: false));
+        store.SaveState(id, activity.Current);
 
         using var shutdown = new CancellationTokenSource();
+        await using var outputLog = new BoundedOutputLog(store.OutputPath(id));
+        await using var activeOutputLog = new BoundedOutputLog(store.ActiveOutputPath(id));
         var server = new SessionPipeServer(pipeName, id, store, fakeShell,
-            new BoundedOutputLog(store.OutputPath(id)), new BoundedOutputLog(store.ActiveOutputPath(id)),
-            shutdown.Cancel);
+            outputLog, activeOutputLog,
+            activity, shutdown.Cancel);
         var serverTask = server.RunAsync(shutdown.Token);
         try
         {
@@ -38,7 +41,7 @@ public sealed class SessionPipeServerTests
             Assert.True(interrupt.Ok);
             Assert.Equal(new byte[] { 0x03 }, fakeShell.Input);
 
-            store.SaveState(id, new SessionState(false, null, root, DateTimeOffset.UtcNow, AtPrompt: true));
+            store.SaveState(id, activity.PromptObserved(root, DateTimeOffset.UtcNow));
             var command = await PipeClient.SendAsync(pipeName,
                 new PipeRequest("send-keys", ["Write-Output ready", "Enter"]));
             Assert.True(command.Ok);

@@ -12,6 +12,7 @@ public sealed class SessionPipeServer
     private readonly IConPtySession _shell;
     private readonly BoundedOutputLog _outputLog;
     private readonly BoundedOutputLog _activeOutputLog;
+    private readonly SessionActivityTracker _activity;
     private readonly Action _requestStop;
 
     public SessionPipeServer(
@@ -22,6 +23,20 @@ public sealed class SessionPipeServer
         BoundedOutputLog outputLog,
         BoundedOutputLog activeOutputLog,
         Action requestStop)
+        : this(pipeName, sessionId, store, shell, outputLog, activeOutputLog,
+            new SessionActivityTracker(store.ReadState(sessionId)), requestStop)
+    {
+    }
+
+    internal SessionPipeServer(
+        string pipeName,
+        string sessionId,
+        SessionStore store,
+        IConPtySession shell,
+        BoundedOutputLog outputLog,
+        BoundedOutputLog activeOutputLog,
+        SessionActivityTracker activity,
+        Action requestStop)
     {
         _pipeName = pipeName;
         _sessionId = sessionId;
@@ -29,6 +44,7 @@ public sealed class SessionPipeServer
         _shell = shell;
         _outputLog = outputLog;
         _activeOutputLog = activeOutputLog;
+        _activity = activity;
         _requestStop = requestStop;
     }
 
@@ -78,7 +94,7 @@ public sealed class SessionPipeServer
 
     private async Task<PipeResponse> HandleAsync(PipeRequest request, CancellationToken cancellationToken)
     {
-        var state = _store.ReadState(_sessionId);
+        var state = _activity.Current;
         switch (request.Action.ToLowerInvariant())
         {
             case "status":
@@ -117,7 +133,7 @@ public sealed class SessionPipeServer
                             SessionId: _sessionId, WorkingDirectory: state.CurrentDirectory, CommandRunning: true);
 
                     if (keys.Any(key => key is "Enter" or "C-m"))
-                        _store.SaveState(_sessionId, SessionActivity.Submitted(state, DateTimeOffset.UtcNow));
+                        _store.SaveState(_sessionId, _activity.Submitted(DateTimeOffset.UtcNow));
                     await _shell.WriteInputAsync(KeyEncoder.Encode(keys), cancellationToken);
                     return new PipeResponse(true, "Input sent.", SessionId: _sessionId);
                 }

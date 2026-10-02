@@ -50,11 +50,12 @@ public sealed class SessionHost(SessionStore store)
                 redirectStandardOutput: redirectShellOutput);
             var record = new SessionRecord(id, Environment.ProcessId, shell, cwd, pipeName, startedAt);
             store.Save(record);
-            var outputLog = new BoundedOutputLog(store.OutputPath(id));
-            var activeLog = new BoundedOutputLog(store.ActiveOutputPath(id), 8 * 1024 * 1024, 7 * 1024 * 1024);
+            var activity = new SessionActivityTracker(store.ReadState(id));
+            await using var outputLog = new BoundedOutputLog(store.OutputPath(id));
+            await using var activeLog = new BoundedOutputLog(store.ActiveOutputPath(id), 8 * 1024 * 1024, 7 * 1024 * 1024);
             var stop = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            var pipeServer = new SessionPipeServer(pipeName, id, store, shellSession, outputLog, activeLog,
+            var pipeServer = new SessionPipeServer(pipeName, id, store, shellSession, outputLog, activeLog, activity,
                 () =>
                 {
                     shellSession.KillTree();
@@ -63,10 +64,10 @@ public sealed class SessionHost(SessionStore store)
             Console.WriteLine($"Hitch session {id} · {Path.GetFileName(shell)}");
             Console.WriteLine("Agent commands can now inspect and control this session. Press Ctrl+\\ or run `hitch off` to stop it.");
 
-            var outputTask = PumpOutputAsync(shellSession, outputLog, activeLog, store, id, shutdown.Token);
-            var inputTask = PumpInputAsync(shellSession, store, id, shutdown.Token);
+            var outputTask = PumpOutputAsync(shellSession, outputLog, activeLog, store, activity, id, shutdown.Token);
+            var inputTask = PumpInputAsync(shellSession, store, activity, id, shutdown.Token);
             var pipeTask = pipeServer.RunAsync(shutdown.Token);
-            var monitorTask = MonitorStateAsync(shellSession, store, id, activeLog, shutdown.Token);
+            var monitorTask = MonitorStateAsync(shellSession, store, activity, id, activeLog, shutdown.Token);
             var resizeTask = MonitorResizeAsync(shellSession, shutdown.Token);
             var exitTask = shellSession.WaitForExitAsync(shutdown.Token);
 
@@ -122,6 +123,7 @@ public sealed class SessionHost(SessionStore store)
         BoundedOutputLog outputLog,
         BoundedOutputLog activeLog,
         SessionStore store,
+        SessionActivityTracker activity,
         string id,
         CancellationToken cancellationToken)
     {
@@ -135,16 +137,15 @@ public sealed class SessionHost(SessionStore store)
             var cwd = parser.Observe(bytes.Span);
             if (cwd is not null)
             {
-                var state = store.ReadState(id);
-                store.SaveState(id, SessionActivity.PromptObserved(state, cwd, DateTimeOffset.UtcNow));
+                store.SaveState(id, activity.PromptObserved(cwd, DateTimeOffset.UtcNow));
             }
-            var current = store.ReadState(id);
-            if (current.CommandRunning)
+            if (activity.Current.CommandRunning)
                 await activeLog.AppendAsync(bytes, cancellationToken);
         }, cancellationToken);
     }
 
-    private static async Task PumpInputAsync(IConPtySession shell, SessionStore store, string sessionId, CancellationToken cancellationToken)
+    private static async Task PumpInputAsync(IConPtySession shell, SessionStore store, SessionActivityTracker activity,
+        string sessionId, CancellationToken cancellationToken)
     {
         var stdin = Console.OpenStandardInput();
         var buffer = new byte[4096];
@@ -161,7 +162,7 @@ public sealed class SessionHost(SessionStore store)
                     return;
                 }
                 if (buffer.AsSpan(0, read).Contains((byte)'\r'))
-                    MarkCommandSubmitted(store, sessionId);
+                    MarkCommandSubmitted(store, activity, sessionId);
                 await shell.WriteInputAsync(buffer.AsMemory(0, read), cancellationToken);
             }
         }
@@ -172,6 +173,7 @@ public sealed class SessionHost(SessionStore store)
     private static async Task MonitorStateAsync(
         IConPtySession shell,
         SessionStore store,
+        SessionActivityTracker activity,
         string id,
         BoundedOutputLog activeLog,
         CancellationToken cancellationToken)
@@ -182,20 +184,21 @@ public sealed class SessionHost(SessionStore store)
             var active = ProcessTreeInspector.GetDescendantNames(shell.ProcessId)
                 .FirstOrDefault(name => !name.Equals("hitch", StringComparison.OrdinalIgnoreCase)
                                         && !name.Equals("conhost", StringComparison.OrdinalIgnoreCase));
-            var old = store.ReadState(id);
+            var old = activity.Current;
             var running = active is not null || !old.AtPrompt;
             if (running && !wasRunning)
                 await File.WriteAllBytesAsync(store.ActiveOutputPath(id), [], cancellationToken);
-            store.SaveState(id, SessionActivity.ProcessObserved(old, active, DateTimeOffset.UtcNow));
+            var observed = activity.ProcessObserved(active, DateTimeOffset.UtcNow);
+            if (!ReferenceEquals(observed, old))
+                store.SaveState(id, observed);
             wasRunning = running;
             await Task.Delay(400, cancellationToken);
         }
     }
 
-    private static void MarkCommandSubmitted(SessionStore store, string id)
+    private static void MarkCommandSubmitted(SessionStore store, SessionActivityTracker activity, string id)
     {
-        var state = store.ReadState(id);
-        store.SaveState(id, SessionActivity.Submitted(state, DateTimeOffset.UtcNow));
+        store.SaveState(id, activity.Submitted(DateTimeOffset.UtcNow));
     }
 
     private static async Task MonitorResizeAsync(IConPtySession shell, CancellationToken cancellationToken)

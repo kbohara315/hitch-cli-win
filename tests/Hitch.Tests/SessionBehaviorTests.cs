@@ -15,20 +15,25 @@ public sealed class SessionBehaviorTests
         var now = DateTimeOffset.UtcNow;
         var initial = new SessionState(false, null, "C:\\work", now, true);
 
-        var submitted = SessionActivity.Submitted(initial, now.AddSeconds(1));
+        var activity = new SessionActivityTracker(initial);
+        var submitted = activity.Submitted(now.AddSeconds(1));
         Assert.True(submitted.CommandRunning);
         Assert.False(submitted.AtPrompt);
         Assert.Equal("shell command", submitted.ActiveCommand);
 
-        var process = SessionActivity.ProcessObserved(submitted, "dotnet", now.AddSeconds(2));
+        var process = activity.ProcessObserved("dotnet", now.AddSeconds(2));
         Assert.Equal("dotnet", process.ActiveCommand);
         Assert.True(process.CommandRunning);
 
-        var prompt = SessionActivity.PromptObserved(process, "C:\\next", now.AddSeconds(3));
+        var prompt = activity.PromptObserved("C:\\next", now.AddSeconds(3));
         Assert.False(prompt.CommandRunning);
         Assert.True(prompt.AtPrompt);
         Assert.Null(prompt.ActiveCommand);
         Assert.Equal("C:\\next", prompt.CurrentDirectory);
+        Assert.Equal(prompt, activity.Current);
+
+        var unchanged = activity.ProcessObserved(null, now.AddSeconds(4));
+        Assert.Same(prompt, unchanged);
     }
 
     [Fact]
@@ -240,5 +245,27 @@ public sealed class SessionBehaviorTests
 
         Assert.False(SessionStore.IsPastStartupGracePeriod(now - SessionStore.IncompleteRecordGracePeriod, now));
         Assert.True(SessionStore.IsPastStartupGracePeriod(now - SessionStore.IncompleteRecordGracePeriod - TimeSpan.FromTicks(1), now));
+    }
+
+    [Fact]
+    public async Task BoundedOutputLogKeepsTailReadableWhileWriterIsOpenAndAfterDispose()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "hitch-output-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "output.log");
+        try
+        {
+            var log = new BoundedOutputLog(path, maxBytes: 8, retainBytes: 6);
+            await log.AppendAsync(Encoding.UTF8.GetBytes("1234\n"));
+            await log.AppendAsync(Encoding.UTF8.GetBytes("5678\n"));
+
+            Assert.Equal("5678\n", await log.ReadTextAsync());
+            await log.DisposeAsync();
+            Assert.Equal("5678\n", await File.ReadAllTextAsync(path));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
     }
 }

@@ -37,10 +37,14 @@ internal static class SessionActivity
     public static SessionState ProcessObserved(SessionState state, string? activeProcess, DateTimeOffset now)
     {
         var running = activeProcess is not null || !state.AtPrompt;
+        var activeCommand = activeProcess ?? (running ? state.ActiveCommand ?? "shell input" : null);
+        if (state.CommandRunning == running && state.ActiveCommand == activeCommand)
+            return state;
+
         return state with
         {
             CommandRunning = running,
-            ActiveCommand = activeProcess ?? (running ? state.ActiveCommand ?? "shell input" : null),
+            ActiveCommand = activeCommand,
             UpdatedAt = now
         };
     }
