@@ -130,6 +130,9 @@ public sealed class SessionBehaviorTests
         try
         {
             store.Save(record);
+            var serializedRecord = File.ReadAllText(store.RecordPath(record.Id));
+            Assert.Contains("\"ProcessId\"", serializedRecord, StringComparison.Ordinal);
+            Assert.Contains(Environment.NewLine, serializedRecord, StringComparison.Ordinal);
             store.SaveState(record.Id, new SessionState(true, "dotnet", root, DateTimeOffset.UtcNow));
 
             Assert.Single(store.ListLive());
@@ -139,6 +142,31 @@ public sealed class SessionBehaviorTests
         finally
         {
             store.Delete(record.Id);
+        }
+    }
+
+    [Fact]
+    public void SessionStoreKeepsPascalCaseIndentedSchemaAndReadsLegacyJson()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "hitch-json-" + Guid.NewGuid().ToString("N"));
+        var store = new SessionStore(root);
+        try
+        {
+            var timestamp = DateTimeOffset.UtcNow;
+            store.SaveState("legacy", new SessionState(true, "dotnet", "C:\\work", timestamp));
+            var written = File.ReadAllText(store.StatePath("legacy"));
+            Assert.Contains("\"CommandRunning\"", written, StringComparison.Ordinal);
+            Assert.Contains(Environment.NewLine, written, StringComparison.Ordinal);
+
+            File.WriteAllText(store.StatePath("legacy"), $$"""{"CommandRunning":true,"ActiveCommand":"legacy","CurrentDirectory":"C:\\old","UpdatedAt":"{{timestamp:O}}","AtPrompt":false}""");
+            var read = store.ReadState("legacy");
+            Assert.True(read.CommandRunning);
+            Assert.Equal("legacy", read.ActiveCommand);
+            Assert.Equal("C:\\old", read.CurrentDirectory);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
     }
 

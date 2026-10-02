@@ -15,13 +15,33 @@ dotnet build Hitch.sln
 dotnet test Hitch.sln
 ```
 
-Publish the self-contained single-file executable with:
+## Publish for Windows x64
+
+Both publishing modes produce a self-contained executable, so end users do **not** need to install the .NET runtime. The standard publish uses the .NET apphost plus bundled runtime; Native AOT compiles the app to native code and generally produces a much smaller executable. Neither mode changes the normal Release build.
+
+Publish the standard self-contained single-file executable:
 
 ```powershell
-dotnet publish src/Hitch/Hitch.csproj -c Release -r win-x64
+dotnet publish src/Hitch/Hitch.csproj -c Release -r win-x64 --self-contained true -o artifacts/publish-standard
 ```
 
-The executable is written to `src/Hitch/bin/Release/net10.0-windows10.0.17763.0/win-x64/publish/hitch.exe`.
+The output is `artifacts/publish-standard/hitch.exe`.
+
+Publish the Native AOT executable using the dedicated profile:
+
+```powershell
+dotnet publish src/Hitch/Hitch.csproj -c Release -p:PublishProfile=NativeAot -o artifacts/publish-aot
+```
+
+The output is `artifacts/publish-aot/hitch.exe`. The `NativeAot` profile targets self-contained `win-x64`; it leaves ordinary Release and standard publishing unchanged.
+
+Native AOT requires the .NET 10 SDK and the Visual C++ x64 native build toolchain (Visual Studio or Build Tools with the MSVC C++ build tools and Windows SDK). On this Windows environment, `vswhere.exe` and `link.exe` are installed but are not on `PATH`. For this installation, prepare the current shell before running the AOT publish command:
+
+```powershell
+$env:PATH = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer;${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.42.34433\bin\Hostx64\x64;$env:PATH"
+```
+
+If the MSVC version or Visual Studio edition differs, use the corresponding installed `Installer` directory and MSVC `bin\Hostx64\x64` directory. `vswhere.exe` must be discoverable on `PATH` for the Native AOT linker step.
 
 ## Try it
 

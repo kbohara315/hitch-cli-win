@@ -30,6 +30,21 @@ public sealed class FramedJsonTests
             await FramedJson.ReadAsync<PipeRequest>(stream));
     }
 
+    [Fact]
+    public async Task ReadsWebDefaultNumberValuesEncodedAsStrings()
+    {
+        await using var stream = new MemoryStream();
+        var payload = System.Text.Encoding.UTF8.GetBytes("{\"action\":\"context\",\"tail\":\"42\"}");
+        await stream.WriteAsync(BitConverter.GetBytes(payload.Length));
+        await stream.WriteAsync(payload);
+        stream.Position = 0;
+
+        var received = await FramedJson.ReadAsync<PipeRequest>(stream);
+
+        Assert.NotNull(received);
+        Assert.Equal(42, received.Tail);
+    }
+
     private sealed class FragmentingStream : MemoryStream
     {
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>

@@ -1,16 +1,13 @@
 using System.Buffers.Binary;
-using System.Text.Json;
 
 namespace Hitch.Protocol;
 
 public static class FramedJson
 {
     private const int MaxMessageBytes = 1024 * 1024;
-    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
-
     public static async Task WriteAsync<T>(Stream stream, T message, CancellationToken cancellationToken = default)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(message, Options);
+        var payload = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(message, JsonFor<T>());
         if (payload.Length > MaxMessageBytes)
             throw new InvalidDataException("IPC message exceeds the 1 MiB limit.");
 
@@ -33,8 +30,12 @@ public static class FramedJson
 
         var payload = new byte[length];
         await stream.ReadExactlyAsync(payload, cancellationToken);
-        return JsonSerializer.Deserialize<T>(payload, Options);
+        return System.Text.Json.JsonSerializer.Deserialize(payload, JsonFor<T>());
     }
+
+    private static System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> JsonFor<T>() =>
+        (System.Text.Json.Serialization.Metadata.JsonTypeInfo<T>?)HitchJsonContext.Default.GetTypeInfo(typeof(T))
+        ?? throw new NotSupportedException($"IPC JSON type {typeof(T)} is not registered.");
 
     private static async Task<bool> ReadExactlyOrEofAsync(Stream stream, Memory<byte> buffer, CancellationToken cancellationToken)
     {

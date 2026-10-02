@@ -9,7 +9,6 @@ namespace Hitch.Sessions;
 public sealed class SessionStore
 {
     internal static readonly TimeSpan IncompleteRecordGracePeriod = TimeSpan.FromSeconds(5);
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private readonly ConcurrentDictionary<string, object> _stateLocks = new(StringComparer.OrdinalIgnoreCase);
     private readonly string _root;
 
@@ -53,7 +52,7 @@ public sealed class SessionStore
         {
             try
             {
-                return JsonSerializer.Deserialize<SessionState>(File.ReadAllText(StatePath(id)))
+                return JsonSerializer.Deserialize(File.ReadAllText(StatePath(id)), SessionStoreJsonContext.Default.SessionState)
                     ?? new SessionState(false, null, string.Empty, DateTimeOffset.UtcNow);
             }
             catch (IOException)
@@ -83,7 +82,7 @@ public sealed class SessionStore
             SessionRecord? record;
             try
             {
-                record = JsonSerializer.Deserialize<SessionRecord>(File.ReadAllText(path));
+                record = JsonSerializer.Deserialize(File.ReadAllText(path), SessionStoreJsonContext.Default.SessionRecord);
             }
             catch (IOException)
             {
@@ -185,7 +184,13 @@ public sealed class SessionStore
     private static void WriteJsonAtomically<T>(string path, T value)
     {
         var temporary = path + ".tmp";
-        File.WriteAllText(temporary, JsonSerializer.Serialize(value, JsonOptions));
+        System.Text.Json.Serialization.Metadata.JsonTypeInfo typeInfo = value switch
+        {
+            SessionRecord record => SessionStoreJsonContext.Default.SessionRecord,
+            SessionState state => SessionStoreJsonContext.Default.SessionState,
+            _ => throw new NotSupportedException($"Session JSON type {typeof(T)} is not registered.")
+        };
+        File.WriteAllText(temporary, JsonSerializer.Serialize(value, typeInfo));
         File.Move(temporary, path, overwrite: true);
     }
 
