@@ -117,13 +117,7 @@ public sealed class SessionPipeServer
                             SessionId: _sessionId, WorkingDirectory: state.CurrentDirectory, CommandRunning: true);
 
                     if (keys.Any(key => key is "Enter" or "C-m"))
-                        _store.SaveState(_sessionId, state with
-                        {
-                            CommandRunning = true,
-                            ActiveCommand = "shell command",
-                            AtPrompt = false,
-                            UpdatedAt = DateTimeOffset.UtcNow
-                        });
+                        _store.SaveState(_sessionId, SessionActivity.Submitted(state, DateTimeOffset.UtcNow));
                     await _shell.WriteInputAsync(KeyEncoder.Encode(keys), cancellationToken);
                     return new PipeResponse(true, "Input sent.", SessionId: _sessionId);
                 }

@@ -25,38 +25,70 @@ internal static class Program
 
     private static async Task<int> RunAsync(string[] args)
     {
-        if (args.Length == 0)
-            return await StartAsync(null);
-        if (args.Length == 1 && args[0] is "-h" or "--help" or "help")
+        var invocation = Parse(args);
+        if (invocation.Kind == CommandKind.Help)
         {
             PrintHelp();
             return 0;
         }
-        if (args.Length == 1 && args[0] == "--version")
+        if (invocation.Kind == CommandKind.Version)
         {
             Console.WriteLine($"hitch {typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "0.1.0"}");
             return 0;
         }
-        if (args.Length == 1 && args[0] == "--skill")
+        if (invocation.Kind == CommandKind.Skill)
         {
             Console.WriteLine(AgentInstructions);
             return 0;
         }
 
-        var command = args[0].ToLowerInvariant();
-        var rest = args.Skip(1).ToArray();
-        return command switch
+        return invocation.Kind switch
         {
-            "on" or "start" => await StartAsync(OptionValue(rest, "--shell")),
-            "off" or "stop" => await StopCurrentAsync(),
-            "status" => await StatusAsync(rest),
-            "context" => await ContextAsync(rest),
-            "capture" => await CaptureAsync(rest),
-            "send-keys" => await SendKeysAsync(rest),
-            "kill" => await KillAsync(rest),
-            "setup" => await SetupAsync(rest),
-            _ => Unknown(command)
+            CommandKind.Start => await StartAsync(invocation.ShellPath),
+            CommandKind.Stop => await StopCurrentAsync(),
+            CommandKind.Status => await StatusAsync(invocation.Arguments),
+            CommandKind.Context => await ContextAsync(invocation.Arguments),
+            CommandKind.Capture => await CaptureAsync(invocation.Arguments),
+            CommandKind.SendKeys => await SendKeysAsync(invocation.Arguments),
+            CommandKind.Kill => await KillAsync(invocation.Arguments),
+            CommandKind.Setup => await SetupAsync(invocation.Arguments),
+            _ => Unknown((invocation.Command ?? "").ToLowerInvariant())
         };
+    }
+
+    internal enum CommandKind { Start, Help, Version, Skill, Stop, Status, Context, Capture, SendKeys, Kill, Setup, Unknown }
+
+    internal sealed record Invocation(CommandKind Kind, string? Command, string[] Arguments, string? ShellPath);
+
+    internal static Invocation Parse(string[] args)
+    {
+        if (args.Length == 0)
+            return new Invocation(CommandKind.Start, null, [], null);
+
+        var command = args[0];
+        if (args.Length == 1)
+        {
+            if (command is "-h" or "--help" or "help")
+                return new Invocation(CommandKind.Help, command, [], null);
+            if (command == "--version") return new Invocation(CommandKind.Version, command, [], null);
+            if (command == "--skill") return new Invocation(CommandKind.Skill, command, [], null);
+        }
+
+        var kind = command.ToLowerInvariant() switch
+        {
+            "on" or "start" => CommandKind.Start,
+            "off" or "stop" => CommandKind.Stop,
+            "status" => CommandKind.Status,
+            "context" => CommandKind.Context,
+            "capture" => CommandKind.Capture,
+            "send-keys" => CommandKind.SendKeys,
+            "kill" => CommandKind.Kill,
+            "setup" => CommandKind.Setup,
+            _ => CommandKind.Unknown
+        };
+        var arguments = args.Skip(1).ToArray();
+        var shellPath = kind == CommandKind.Start ? OptionValue(arguments, "--shell") : null;
+        return new Invocation(kind, command, arguments, shellPath);
     }
 
     private static async Task<int> StartAsync(string? shellPath)

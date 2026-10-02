@@ -70,26 +70,16 @@ public sealed class SessionHost(SessionStore store)
             var resizeTask = MonitorResizeAsync(shellSession, shutdown.Token);
             var exitTask = shellSession.WaitForExitAsync(shutdown.Token);
 
-            var completed = await Task.WhenAny(exitTask, inputTask, stop.Task);
-            var exitCode = completed == exitTask ? await exitTask : 0;
-            if (!shellSession.HasExited)
-                shellSession.KillTree();
-
-            try { await exitTask.WaitAsync(TimeSpan.FromSeconds(2), CancellationToken.None); }
-            catch (Exception ex) when (ex is OperationCanceledException or TimeoutException or InvalidOperationException) { }
-            shellSession.ClosePseudoConsole();
-            try { await outputTask.WaitAsync(TimeSpan.FromSeconds(2), CancellationToken.None); }
-            catch (Exception ex) when (ex is OperationCanceledException or TimeoutException or IOException) { }
-            shutdown.Cancel();
-            try
-            {
-                // Console input reads can remain pending after cancellation on synchronous handles;
-                // the host exits immediately afterward, so don't hold session shutdown open for it.
-                await Task.WhenAll(pipeTask, monitorTask, resizeTask)
-                    .WaitAsync(TimeSpan.FromSeconds(2), CancellationToken.None);
-            }
-            catch (Exception ex) when (ex is OperationCanceledException or TimeoutException or IOException) { }
-            await shellSession.DisposeAsync();
+            var exitCode = await SessionLifecycle.RunAsync(
+                exitTask,
+                inputTask,
+                stop.Task,
+                () => { if (!shellSession.HasExited) shellSession.KillTree(); },
+                shellSession.ClosePseudoConsole,
+                outputTask,
+                shutdown.Cancel,
+                [pipeTask, monitorTask, resizeTask],
+                shellSession.DisposeAsync);
 
             var finalState = store.ReadState(id);
             if (!string.IsNullOrWhiteSpace(syncPath) && Directory.Exists(finalState.CurrentDirectory))
@@ -146,14 +136,7 @@ public sealed class SessionHost(SessionStore store)
             if (cwd is not null)
             {
                 var state = store.ReadState(id);
-                store.SaveState(id, state with
-                {
-                    CurrentDirectory = cwd,
-                    CommandRunning = false,
-                    ActiveCommand = null,
-                    AtPrompt = true,
-                    UpdatedAt = DateTimeOffset.UtcNow
-                });
+                store.SaveState(id, SessionActivity.PromptObserved(state, cwd, DateTimeOffset.UtcNow));
             }
             var current = store.ReadState(id);
             if (current.CommandRunning)
@@ -203,12 +186,7 @@ public sealed class SessionHost(SessionStore store)
             var running = active is not null || !old.AtPrompt;
             if (running && !wasRunning)
                 await File.WriteAllBytesAsync(store.ActiveOutputPath(id), [], cancellationToken);
-            store.SaveState(id, old with
-            {
-                CommandRunning = running,
-                ActiveCommand = active ?? (running ? old.ActiveCommand ?? "shell input" : null),
-                UpdatedAt = DateTimeOffset.UtcNow
-            });
+            store.SaveState(id, SessionActivity.ProcessObserved(old, active, DateTimeOffset.UtcNow));
             wasRunning = running;
             await Task.Delay(400, cancellationToken);
         }
@@ -217,13 +195,7 @@ public sealed class SessionHost(SessionStore store)
     private static void MarkCommandSubmitted(SessionStore store, string id)
     {
         var state = store.ReadState(id);
-        store.SaveState(id, state with
-        {
-            CommandRunning = true,
-            ActiveCommand = "shell command",
-            AtPrompt = false,
-            UpdatedAt = DateTimeOffset.UtcNow
-        });
+        store.SaveState(id, SessionActivity.Submitted(state, DateTimeOffset.UtcNow));
     }
 
     private static async Task MonitorResizeAsync(IConPtySession shell, CancellationToken cancellationToken)

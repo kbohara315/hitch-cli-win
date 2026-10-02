@@ -8,6 +8,7 @@ namespace Hitch.Sessions;
 
 public sealed class SessionStore
 {
+    internal static readonly TimeSpan IncompleteRecordGracePeriod = TimeSpan.FromSeconds(5);
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private readonly ConcurrentDictionary<string, object> _stateLocks = new(StringComparer.OrdinalIgnoreCase);
     private readonly string _root;
@@ -75,7 +76,7 @@ public sealed class SessionStore
             var path = Path.Combine(directory, "session.json");
             if (!File.Exists(path))
             {
-                if (Directory.GetLastWriteTimeUtc(directory) < DateTime.UtcNow.AddSeconds(-5))
+                if (IsPastStartupGracePeriod(Directory.GetLastWriteTimeUtc(directory), DateTime.UtcNow))
                     TryDeleteDirectory(directory);
                 continue;
             }
@@ -90,6 +91,10 @@ public sealed class SessionStore
             }
             catch (JsonException)
             {
+                // A directory without a readable record may be an interrupted startup.
+                // Preserve the grace period so another host can finish initialization.
+                if (IsPastStartupGracePeriod(File.GetLastWriteTimeUtc(path), DateTime.UtcNow))
+                    TryDeleteDirectory(directory);
                 continue;
             }
 
@@ -133,6 +138,7 @@ public sealed class SessionStore
             if (!acquired)
                 throw new IOException("Timed out allocating a shared session ID.");
 
+            // Listing also prunes confirmed stale records before reusing their IDs.
             _ = ListLive();
             var id = 1;
             while (Directory.Exists(SessionDirectory(id.ToString())))
@@ -148,6 +154,9 @@ public sealed class SessionStore
         }
     }
 
+    internal static bool IsPastStartupGracePeriod(DateTime lastWriteUtc, DateTime nowUtc) =>
+        lastWriteUtc < nowUtc - IncompleteRecordGracePeriod;
+
     private static bool IsSameRunningProcess(SessionRecord record)
     {
         try
@@ -155,6 +164,8 @@ public sealed class SessionStore
             using var process = Process.GetProcessById(record.ProcessId);
             if (process.HasExited)
                 return false;
+            // PID alone is reusable; matching the recorded start time avoids treating a later
+            // unrelated process as a live session after a host crash.
             return Math.Abs((process.StartTime.ToUniversalTime() - record.StartedAt.UtcDateTime).TotalSeconds) < 10;
         }
         catch (ArgumentException)
