@@ -7,7 +7,7 @@ namespace Hitch.Tests;
 
 public sealed class ConPtyIntegrationTests
 {
-    [Fact]
+    [WindowsFact]
     public async Task ConPtyRunsCommandAndCapturesItsTerminalOutput()
     {
         var shell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
@@ -41,7 +41,7 @@ public sealed class ConPtyIntegrationTests
         }
     }
 
-    [Fact]
+    [WindowsFact]
     public async Task ConPtyForwardsTypedInputToInteractiveCmd()
     {
         var shell = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
@@ -78,7 +78,7 @@ public sealed class ConPtyIntegrationTests
         }
     }
 
-    [Fact]
+    [WindowsFact]
     public async Task ManagedPowerShellPromptShowsItsSessionId()
     {
         var shell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");

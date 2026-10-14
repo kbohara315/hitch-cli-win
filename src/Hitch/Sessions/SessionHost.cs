@@ -7,8 +7,12 @@ public sealed class SessionHost(SessionStore store)
 {
     public async Task<int> RunAsync(string shell, string shellArguments, CancellationToken cancellationToken = default)
     {
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux())
+            throw new PlatformNotSupportedException("Hitch session hosting supports Windows and Linux only.");
         var id = store.AllocateId();
-        var pipeName = "hitch-" + id;
+        var pipeName = OperatingSystem.IsLinux()
+            ? Path.Combine(store.SessionDirectory(id), "control.sock")
+            : "hitch-" + id;
         var startedAt = DateTimeOffset.UtcNow;
         var syncPath = Environment.GetEnvironmentVariable("HITCH_CWD_SYNC_FILE");
         var cwd = Environment.CurrentDirectory;
@@ -16,10 +20,20 @@ public sealed class SessionHost(SessionStore store)
         var redirectShellOutput = Console.IsOutputRedirected;
         using var terminalMode = ConsoleModeScope.Enter();
         var hostExecutable = ResolveHostExecutable();
-        var cmdShimPath = Path.Combine(store.SessionDirectory(id), "hitch.cmd");
-        await File.WriteAllTextAsync(cmdShimPath, "@echo off\r\n\"%HITCH_EXE%\" %*\r\nexit /b %ERRORLEVEL%\r\n", cancellationToken);
+        var cmdShimPath = Path.Combine(store.SessionDirectory(id), OperatingSystem.IsLinux() ? "hitch" : "hitch.cmd");
+        var shim = OperatingSystem.IsLinux()
+            ? "#!/bin/sh\nexec \"$HITCH_EXE\" \"$@\"\n"
+            : "@echo off\r\n\"%HITCH_EXE%\" %*\r\nexit /b %ERRORLEVEL%\r\n";
+        await File.WriteAllTextAsync(cmdShimPath, shim, cancellationToken);
+        if (OperatingSystem.IsLinux()) File.SetUnixFileMode(cmdShimPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
 
-        if (IsPowerShell(shell))
+        if (OperatingSystem.IsLinux() && Path.GetFileName(shell) == "bash")
+        {
+            var bootstrapPath = Path.Combine(store.SessionDirectory(id), "bashrc");
+            await File.WriteAllTextAsync(bootstrapPath, ManagedShellPrompt.BashBootstrap, cancellationToken);
+            shellArguments += $" --rcfile \"{bootstrapPath}\"";
+        }
+        else if (IsPowerShell(shell))
         {
             var bootstrapPath = Path.Combine(store.SessionDirectory(id), "prompt.ps1");
             await File.WriteAllTextAsync(bootstrapPath, ManagedShellPrompt.PowerShellBootstrap, cancellationToken);
@@ -41,13 +55,9 @@ public sealed class SessionHost(SessionStore store)
             Environment.SetEnvironmentVariable("PROMPT", "$E]7;file://localhost/$P$E\\$S$E[32m#" + id + "$E[0m$S" + (oldPrompt ?? "$P$G"));
         try
         {
-            await using var shellSession = ConPtySession.Start(
-                shell,
-                shellArguments,
-                cwd,
-                size.Columns,
-                size.Rows,
-                redirectStandardOutput: redirectShellOutput);
+            await using IManagedTerminalSession shellSession = OperatingSystem.IsLinux()
+                ? LinuxPtySession.Start(shell, shellArguments, cwd, size.Columns, size.Rows, Path.Combine(store.SessionDirectory(id), "resize.sock"), hostExecutable)
+                : ConPtySession.Start(shell, shellArguments, cwd, size.Columns, size.Rows, redirectStandardOutput: redirectShellOutput);
             var record = new SessionRecord(id, Environment.ProcessId, shell, cwd, pipeName, startedAt);
             store.Save(record);
             var activity = new SessionActivityTracker(store.ReadState(id));
@@ -67,7 +77,7 @@ public sealed class SessionHost(SessionStore store)
             var outputTask = PumpOutputAsync(shellSession, outputLog, activeLog, store, activity, id, shutdown.Token);
             var inputTask = PumpInputAsync(shellSession, store, activity, id, shutdown.Token);
             var pipeTask = pipeServer.RunAsync(shutdown.Token);
-            var monitorTask = MonitorStateAsync(shellSession, store, activity, id, activeLog, shutdown.Token);
+            var monitorTask = MonitorStateAsync(shellSession, Path.GetFileNameWithoutExtension(shell), store, activity, id, activeLog, shutdown.Token);
             var resizeTask = MonitorResizeAsync(shellSession, shutdown.Token);
             var exitTask = shellSession.WaitForExitAsync(shutdown.Token);
 
@@ -112,14 +122,14 @@ public sealed class SessionHost(SessionStore store)
         if (processPath is not null
             && Path.GetFileNameWithoutExtension(processPath).Equals("hitch", StringComparison.OrdinalIgnoreCase))
             return processPath;
-        var appHost = Path.Combine(AppContext.BaseDirectory, "hitch.exe");
+        var appHost = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsLinux() ? "hitch" : "hitch.exe");
         if (File.Exists(appHost))
             return appHost;
-        throw new InvalidOperationException("Could not locate hitch.exe to expose the session commands to the managed shell.");
+        throw new InvalidOperationException("Could not locate the Hitch executable to expose session commands to the managed shell.");
     }
 
     private static async Task PumpOutputAsync(
-        IConPtySession shell,
+        IManagedTerminalSession shell,
         BoundedOutputLog outputLog,
         BoundedOutputLog activeLog,
         SessionStore store,
@@ -144,7 +154,7 @@ public sealed class SessionHost(SessionStore store)
         }, cancellationToken);
     }
 
-    private static async Task PumpInputAsync(IConPtySession shell, SessionStore store, SessionActivityTracker activity,
+    private static async Task PumpInputAsync(IManagedTerminalSession shell, SessionStore store, SessionActivityTracker activity,
         string sessionId, CancellationToken cancellationToken)
     {
         var stdin = Console.OpenStandardInput();
@@ -171,7 +181,8 @@ public sealed class SessionHost(SessionStore store)
     }
 
     private static async Task MonitorStateAsync(
-        IConPtySession shell,
+        IManagedTerminalSession shell,
+        string shellName,
         SessionStore store,
         SessionActivityTracker activity,
         string id,
@@ -181,9 +192,7 @@ public sealed class SessionHost(SessionStore store)
         bool wasRunning = false;
         while (!cancellationToken.IsCancellationRequested && !shell.HasExited)
         {
-            var active = ProcessTreeInspector.GetDescendantNames(shell.ProcessId)
-                .FirstOrDefault(name => !name.Equals("hitch", StringComparison.OrdinalIgnoreCase)
-                                        && !name.Equals("conhost", StringComparison.OrdinalIgnoreCase));
+            var active = SelectActiveProcess(ProcessTreeInspector.GetDescendantNames(shell.ProcessId), shellName);
             var old = activity.Current;
             var running = active is not null || !old.AtPrompt;
             if (running && !wasRunning)
@@ -196,12 +205,18 @@ public sealed class SessionHost(SessionStore store)
         }
     }
 
+    internal static string? SelectActiveProcess(IEnumerable<string> descendants, string shellName)
+        => descendants.FirstOrDefault(name => !name.Equals("hitch", StringComparison.OrdinalIgnoreCase)
+                                              && !name.Equals("hitch-pty", StringComparison.OrdinalIgnoreCase)
+                                              && !name.Equals("conhost", StringComparison.OrdinalIgnoreCase)
+                                              && !(OperatingSystem.IsLinux() && name.Equals(shellName, StringComparison.OrdinalIgnoreCase)));
+
     private static void MarkCommandSubmitted(SessionStore store, SessionActivityTracker activity, string id)
     {
         store.SaveState(id, activity.Submitted(DateTimeOffset.UtcNow));
     }
 
-    private static async Task MonitorResizeAsync(IConPtySession shell, CancellationToken cancellationToken)
+    private static async Task MonitorResizeAsync(IManagedTerminalSession shell, CancellationToken cancellationToken)
     {
         var previous = ConsoleModeScope.GetSize();
         while (!cancellationToken.IsCancellationRequested && !shell.HasExited)

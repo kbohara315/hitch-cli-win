@@ -9,6 +9,10 @@ public static class ProcessTreeInspector
 
     public static int? GetParentProcessId(int processId)
     {
+        if (OperatingSystem.IsLinux())
+            return GetLinuxParentProcessId(processId);
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("Process inspection supports Windows and Linux only.");
         var snapshot = CreateToolhelp32Snapshot(SnapshotProcesses, 0);
         if (snapshot == InvalidHandle)
             return null;
@@ -33,6 +37,10 @@ public static class ProcessTreeInspector
 
     public static IReadOnlyList<string> GetDescendantNames(int rootProcessId)
     {
+        if (OperatingSystem.IsLinux())
+            return GetLinuxDescendantNames(rootProcessId);
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("Process inspection supports Windows and Linux only.");
         var snapshot = CreateToolhelp32Snapshot(SnapshotProcesses, 0);
         if (snapshot == InvalidHandle)
             return [];
@@ -70,6 +78,60 @@ public static class ProcessTreeInspector
         {
             _ = CloseHandle(snapshot);
         }
+    }
+
+    private static int? GetLinuxParentProcessId(int processId)
+    {
+        try
+        {
+            var stat = File.ReadAllText($"/proc/{processId}/stat");
+            var close = stat.LastIndexOf(')');
+            var fields = stat[(close + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            return fields.Length > 1 && int.TryParse(fields[1], out var parent) ? parent : null;
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
+    private static IReadOnlyList<string> GetLinuxDescendantNames(int rootProcessId)
+    {
+        try
+        {
+            var processes = new List<(int Pid, int Parent, string Name)>();
+            foreach (var directory in Directory.EnumerateDirectories("/proc"))
+            {
+                if (!int.TryParse(Path.GetFileName(directory), out var pid)) continue;
+                try
+                {
+                    var stat = File.ReadAllText(Path.Combine(directory, "stat"));
+                    var close = stat.LastIndexOf(')');
+                    if (close < 0) continue;
+                    var fields = stat[(close + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (fields.Length < 2 || !int.TryParse(fields[1], out var parent)) continue;
+                    var name = File.ReadAllText(Path.Combine(directory, "comm")).Trim();
+                    processes.Add((pid, parent, name));
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+            var descendants = new HashSet<int> { rootProcessId };
+            var names = new List<string>();
+            bool changed;
+            do
+            {
+                changed = false;
+                foreach (var process in processes)
+                {
+                    if (descendants.Contains(process.Pid) || !descendants.Contains(process.Parent)) continue;
+                    descendants.Add(process.Pid);
+                    names.Add(process.Name);
+                    changed = true;
+                }
+            } while (changed);
+            return names;
+        }
+        catch (IOException) { return []; }
+        catch (UnauthorizedAccessException) { return []; }
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]

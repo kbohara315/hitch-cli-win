@@ -11,9 +11,12 @@ public sealed class ShellIntegrationInstaller
 
     public ShellIntegrationInstaller(string? root = null, string? documentsDirectory = null, Action<string>? addUserPath = null)
     {
-        _root = root ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Hitch");
-        _documentsDirectory = documentsDirectory ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        _root = root ?? (OperatingSystem.IsLinux()
+            ? Path.Combine(Environment.GetEnvironmentVariable("HOME") ?? throw new InvalidOperationException("HOME must be set for Hitch setup."), ".local", "share", "hitch")
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Hitch"));
+        _documentsDirectory = documentsDirectory ?? (OperatingSystem.IsLinux()
+            ? Environment.GetEnvironmentVariable("HOME") ?? string.Empty
+            : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
         _addUserPath = addUserPath ?? AddUserPath;
     }
 
@@ -28,7 +31,9 @@ public sealed class ShellIntegrationInstaller
         var executable = executablePath ?? ResolveExecutable();
         if (requireConfirmation)
         {
-            Console.WriteLine("Hitch setup will install PowerShell profile functions and a CMD wrapper, add Hitch to your user PATH, and back up files before changing them.");
+            Console.WriteLine(OperatingSystem.IsLinux()
+                ? "Hitch setup will install Bash integration, add Hitch to ~/.local/bin, and back up files before changing them."
+                : "Hitch setup will install PowerShell profile functions and a CMD wrapper, add Hitch to your user PATH, and back up files before changing them.");
             Console.Write("Continue? [y/N] ");
             var answer = Console.ReadLine();
             if (!string.Equals(answer, "y", StringComparison.OrdinalIgnoreCase)
@@ -38,6 +43,9 @@ public sealed class ShellIntegrationInstaller
                 return false;
             }
         }
+
+        if (OperatingSystem.IsLinux())
+            return await InstallBashAsync(executable, cancellationToken);
 
         var appDirectory = Path.Combine(_root, "app");
         var binDirectory = Path.Combine(_root, "bin");
@@ -64,6 +72,91 @@ public sealed class ShellIntegrationInstaller
             _addUserPath(binDirectory);
         Console.WriteLine("Shell integration installed. Restart open PowerShell/CMD windows before using the cwd-sync wrappers.");
         return true;
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("linux")]
+    private async Task<bool> InstallBashAsync(string executable, CancellationToken cancellationToken)
+    {
+        var appDirectory = Path.Combine(_root, "app");
+        var binDirectory = Path.Combine(_documentsDirectory, ".local", "bin");
+        Directory.CreateDirectory(appDirectory);
+        Directory.CreateDirectory(binDirectory);
+        var installedExecutable = Path.Combine(appDirectory, "hitch");
+        if (!FilesMatch(executable, installedExecutable))
+        {
+            BackupIfPresent(installedExecutable);
+            File.Copy(executable, installedExecutable, overwrite: true);
+            File.SetUnixFileMode(installedExecutable, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        var helperSource = Path.Combine(AppContext.BaseDirectory, "hitch-pty");
+        if (File.Exists(helperSource))
+        {
+            var helperTarget = Path.Combine(appDirectory, "hitch-pty");
+            if (!FilesMatch(helperSource, helperTarget))
+            {
+                BackupIfPresent(helperTarget);
+                File.Copy(helperSource, helperTarget, overwrite: true);
+            }
+            File.SetUnixFileMode(helperTarget, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        else
+        {
+            throw new FileNotFoundException($"Linux PTY helper was not found at '{helperSource}'. Install the complete Hitch Linux package.");
+        }
+        var commandPath = Path.Combine(binDirectory, "hitch");
+        var commandLinkTarget = new FileInfo(commandPath).LinkTarget;
+        var pointsToInstalled = commandLinkTarget is not null
+            && Path.GetFullPath(Path.Combine(binDirectory, commandLinkTarget)) == Path.GetFullPath(installedExecutable);
+        if (!pointsToInstalled && (File.Exists(commandPath) || commandLinkTarget is not null))
+        {
+            if (commandLinkTarget is not null)
+            {
+                var backupDirectory = Path.Combine(_root, "backups");
+                Directory.CreateDirectory(backupDirectory);
+                var backup = Path.Combine(backupDirectory, $"hitch-link-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}.txt");
+                await File.WriteAllTextAsync(backup, commandLinkTarget, cancellationToken);
+            }
+            else BackupIfPresent(commandPath);
+            File.Delete(commandPath);
+        }
+        if (!pointsToInstalled)
+            File.CreateSymbolicLink(commandPath, installedExecutable);
+
+        var profile = Path.Combine(_documentsDirectory, ".bashrc");
+        Directory.CreateDirectory(Path.GetDirectoryName(profile)!);
+        var oldText = File.Exists(profile) ? await File.ReadAllTextAsync(profile, cancellationToken) : string.Empty;
+        var block = CreateBashBlock(installedExecutable);
+        await WriteIfChangedAsync(profile, ReplaceMarkedBlock(oldText, block), cancellationToken);
+        Console.WriteLine("Bash integration installed. Restart Bash or source ~/.bashrc.");
+        return true;
+    }
+
+    private static string CreateBashBlock(string executable)
+    {
+        var quoted = "'" + executable.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
+        return $$"""
+            {{StartMarker}}
+            export PATH="$HOME/.local/bin:$PATH"
+            hitch() {
+                local starts_session=0
+                if (($# == 0)) || [[ "$1" == on || "$1" == start ]]; then starts_session=1; fi
+                if (( ! starts_session )); then {{quoted}} "$@"; return $?; fi
+                local sync_file
+                sync_file=$(mktemp "${TMPDIR:-/tmp}/hitch-cwd.XXXXXX") || return 1
+                local had_sync_file=0 old_sync_file=${HITCH_CWD_SYNC_FILE-}
+                [[ ${HITCH_CWD_SYNC_FILE+x} ]] && had_sync_file=1
+                export HITCH_CWD_SYNC_FILE="$sync_file"
+                if (($# == 0)); then {{quoted}} on --shell "$(command -v bash)"
+                else {{quoted}} "$@" --shell "$(command -v bash)"; fi
+                local result=$?
+                if ((had_sync_file)); then export HITCH_CWD_SYNC_FILE="$old_sync_file"; else unset HITCH_CWD_SYNC_FILE; fi
+                if [[ -s "$sync_file" ]]; then cd -- "$(cat -- "$sync_file")"; fi
+                rm -f -- "$sync_file"
+                return "$result"
+            }
+            unhitch() { hitch off; }
+            {{EndMarker}}
+            """;
     }
 
     private void InstallPowerShellProfile(string path, string executable)
@@ -207,7 +300,7 @@ public sealed class ShellIntegrationInstaller
         var path = Environment.ProcessPath;
         if (path is not null && Path.GetFileNameWithoutExtension(path).Equals("hitch", StringComparison.OrdinalIgnoreCase))
             return path;
-        var appHost = Path.Combine(AppContext.BaseDirectory, "hitch.exe");
+        var appHost = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsLinux() ? "hitch" : "hitch.exe");
         if (File.Exists(appHost))
             return appHost;
         throw new InvalidOperationException($"Could not locate the self-contained hitch.exe under '{AppContext.BaseDirectory}'.");

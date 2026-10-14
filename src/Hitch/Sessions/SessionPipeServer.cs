@@ -1,4 +1,7 @@
 using System.IO.Pipes;
+using System.Net;
+using System.Net.Sockets;
+using System.Runtime.Versioning;
 using Hitch.Native;
 using Hitch.Protocol;
 
@@ -9,7 +12,7 @@ public sealed class SessionPipeServer
     private readonly string _pipeName;
     private readonly string _sessionId;
     private readonly SessionStore _store;
-    private readonly IConPtySession _shell;
+    private readonly IManagedTerminalSession _shell;
     private readonly BoundedOutputLog _outputLog;
     private readonly BoundedOutputLog _activeOutputLog;
     private readonly SessionActivityTracker _activity;
@@ -19,7 +22,7 @@ public sealed class SessionPipeServer
         string pipeName,
         string sessionId,
         SessionStore store,
-        IConPtySession shell,
+        IManagedTerminalSession shell,
         BoundedOutputLog outputLog,
         BoundedOutputLog activeOutputLog,
         Action requestStop)
@@ -32,7 +35,7 @@ public sealed class SessionPipeServer
         string pipeName,
         string sessionId,
         SessionStore store,
-        IConPtySession shell,
+        IManagedTerminalSession shell,
         BoundedOutputLog outputLog,
         BoundedOutputLog activeOutputLog,
         SessionActivityTracker activity,
@@ -50,6 +53,14 @@ public sealed class SessionPipeServer
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
+        if (OperatingSystem.IsLinux())
+        {
+            await RunUnixSocketAsync(cancellationToken);
+            return;
+        }
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("Hitch session control is supported on Windows and Linux only.");
+
         while (!cancellationToken.IsCancellationRequested)
         {
             await using var pipe = new NamedPipeServerStream(
@@ -89,6 +100,49 @@ public sealed class SessionPipeServer
             {
                 // Malformed local client data must not take down the managed shell.
             }
+        }
+    }
+
+    [SupportedOSPlatform("linux")]
+    private async Task RunUnixSocketAsync(CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_pipeName)!);
+        try { File.Delete(_pipeName); }
+        catch (FileNotFoundException) { }
+        using var listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        listener.Bind(new UnixDomainSocketEndPoint(_pipeName));
+        File.SetUnixFileMode(_pipeName, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        listener.Listen(16);
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                using var client = await listener.AcceptAsync(cancellationToken);
+                await using var stream = new NetworkStream(client, ownsSocket: false);
+                try
+                {
+                    var request = await FramedJson.ReadAsync<PipeRequest>(stream, cancellationToken);
+                    if (request is null)
+                        continue;
+                    await FramedJson.WriteAsync(stream, await HandleAsync(request, cancellationToken), cancellationToken);
+                    if (request.Action.Equals("stop", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(100);
+                            _requestStop();
+                        });
+                    }
+                }
+                catch (IOException) { }
+                catch (InvalidDataException) { }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        finally
+        {
+            try { File.Delete(_pipeName); }
+            catch (IOException) { }
         }
     }
 

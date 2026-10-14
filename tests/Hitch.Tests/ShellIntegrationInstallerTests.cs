@@ -5,7 +5,7 @@ namespace Hitch.Tests;
 
 public sealed class ShellIntegrationInstallerTests
 {
-    [Fact]
+    [WindowsFact]
     public async Task NonInteractiveInstallIsRepeatableWithoutTouchingUserProfileOrPath()
     {
         var root = Path.Combine(Path.GetTempPath(), "hitch-tests-" + Guid.NewGuid().ToString("N"));

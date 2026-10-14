@@ -1,13 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>hitch</AssemblyName>
     <Version>0.1.0</Version>
     <RootNamespace>Hitch</RootNamespace>
-    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <RuntimeIdentifiers>win-x64;linux-x64</RuntimeIdentifiers>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('Windows'))">win-x64</RuntimeIdentifier>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('Linux'))">linux-x64</RuntimeIdentifier>
+    <IsLinuxBuildHost>$([MSBuild]::IsOSPlatform('Linux'))</IsLinuxBuildHost>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
@@ -18,4 +21,16 @@
     <InternalsVisibleTo Include="Hitch.Tests" />
     <EmbeddedResource Include="..\..\SKILL.md" LogicalName="Hitch.AgentSkills.hitch.SKILL.md" />
   </ItemGroup>
+  <Target Name="RequireLinuxBuildHostForLinuxRuntime" BeforeTargets="Build" Condition="'$(RuntimeIdentifier)' == 'linux-x64' and '$(IsLinuxBuildHost)' != 'true'">
+    <Error Text="The linux-x64 Hitch runtime requires a Linux build host to compile and package hitch-pty. Use Ubuntu CI or build/publish on Linux; cross-publishing Linux from this host is unsupported." />
+  </Target>
+  <Target Name="BuildLinuxPtyHelper" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+    <MakeDir Directories="$(TargetDir)" />
+    <Exec Command="cc -std=c11 -O2 -Wall -Wextra -Werror &quot;$(MSBuildProjectDirectory)/Native/hitch-pty.c&quot; -lutil -o &quot;$(TargetDir)hitch-pty&quot;" />
+    <Exec Command="chmod 755 &quot;$(TargetDir)hitch-pty&quot;" />
+  </Target>
+  <Target Name="PublishLinuxPtyHelper" AfterTargets="Publish" Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+    <Exec Command="cc -std=c11 -O2 -Wall -Wextra -Werror &quot;$(MSBuildProjectDirectory)/Native/hitch-pty.c&quot; -lutil -o &quot;$(PublishDir)hitch-pty&quot;" />
+    <Exec Command="chmod 755 &quot;$(PublishDir)hitch-pty&quot;" />
+  </Target>
 </Project>

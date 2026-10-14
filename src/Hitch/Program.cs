@@ -42,6 +42,9 @@ internal static class Program
             return 0;
         }
 
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux())
+            throw new PlatformNotSupportedException("Hitch currently supports Windows x64 and Linux x64 only.");
+
         return invocation.Kind switch
         {
             CommandKind.Start => await StartAsync(invocation.ShellPath),
@@ -334,7 +337,7 @@ internal static class Program
 
     private static void PrintHelp()
     {
-        Console.WriteLine("Hitch for Windows — share managed PowerShell and CMD sessions with coding agents.");
+        Console.WriteLine("Hitch — share managed shell sessions with coding agents on Windows and Linux.");
         Console.WriteLine();
         Console.WriteLine("Usage: hitch [COMMAND]");
         Console.WriteLine("  hitch [on] [--shell PATH]       Start and attach a managed shell");
@@ -344,7 +347,7 @@ internal static class Program
         Console.WriteLine("  hitch capture -t SESSION-ID     Print recent transcript output");
         Console.WriteLine("  hitch send-keys -t ID [--force] Send text or keys to a managed shell");
         Console.WriteLine("  hitch kill SESSION-ID           End a managed shell session");
-        Console.WriteLine("  hitch setup [--yes]             Install PowerShell/CMD integration (confirmed unless --yes)");
+        Console.WriteLine("  hitch setup [--yes]             Install shell integration (PowerShell/CMD on Windows, Bash on Linux)");
         Console.WriteLine("  hitch --skill                   Print built-in agent instructions");
     }
 

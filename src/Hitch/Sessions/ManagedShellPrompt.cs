@@ -2,6 +2,21 @@ namespace Hitch.Sessions;
 
 public static class ManagedShellPrompt
 {
+    public const string BashBootstrap = """
+        if [[ -n "$HOME" && -r "$HOME/.bashrc" && "$HOME/.bashrc" != "$BASH_SOURCE" ]]; then source "$HOME/.bashrc"; fi
+        __hitch_original_prompt_command=("${PROMPT_COMMAND[@]-}")
+        __hitch_base_ps1=${PS1-}
+        __hitch_prompt_command() {
+            local __hitch_command
+            for __hitch_command in "${__hitch_original_prompt_command[@]}"; do eval "$__hitch_command"; done
+            printf '\033]7;file://localhost%s\007' "$PWD"
+            if [[ -n "$HITCH_SESSION" ]]; then PS1="\\[\\e[32m\\]#$HITCH_SESSION\\[\\e[0m\\] $__hitch_base_ps1"; fi
+        }
+        PROMPT_COMMAND=__hitch_prompt_command
+        hitch() { "$HITCH_EXE" "$@"; }
+        unhitch() { hitch off; }
+        """;
+
     public const string PowerShellBootstrap = """
         $global:__hitchManagedOriginalPrompt = (Get-Command prompt -CommandType Function).ScriptBlock
         function global:prompt {

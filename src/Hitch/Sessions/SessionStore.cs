@@ -3,24 +3,44 @@ using System.Text.Json;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
+using System.Runtime.Versioning;
 
 namespace Hitch.Sessions;
 
 public sealed class SessionStore
 {
+    private static readonly UnixFileMode PrivateDirectoryMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+    private static readonly UnixFileMode PrivateFileMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+    private static readonly ConcurrentDictionary<string, object> LinuxIdLocks = new(StringComparer.Ordinal);
     internal static readonly TimeSpan IncompleteRecordGracePeriod = TimeSpan.FromSeconds(5);
     private readonly ConcurrentDictionary<string, object> _stateLocks = new(StringComparer.OrdinalIgnoreCase);
     private readonly string _root;
 
     public SessionStore(string? root = null)
     {
-        _root = root ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Hitch",
-            "sessions");
+        _root = root ?? GetDefaultRoot();
     }
 
     public string Root => _root;
+
+    private static string GetDefaultRoot()
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            var runtime = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR");
+            if (!string.IsNullOrWhiteSpace(runtime))
+                return Path.Combine(runtime, "hitch", "sessions");
+
+            var stateHome = Environment.GetEnvironmentVariable("XDG_STATE_HOME");
+            var home = Environment.GetEnvironmentVariable("HOME");
+            var root = !string.IsNullOrWhiteSpace(stateHome) ? stateHome
+                : !string.IsNullOrWhiteSpace(home) ? Path.Combine(home, ".local", "state")
+                : throw new InvalidOperationException("HOME or XDG_STATE_HOME must be set to store Hitch sessions securely.");
+            return Path.Combine(root, "hitch", "sessions");
+        }
+
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Hitch", "sessions");
+    }
 
     public string SessionDirectory(string id) => Path.Combine(_root, id);
 
@@ -34,14 +54,14 @@ public sealed class SessionStore
 
     public void Save(SessionRecord record)
     {
-        Directory.CreateDirectory(SessionDirectory(record.Id));
+        EnsurePrivateDirectory(SessionDirectory(record.Id));
         WriteJsonAtomically(RecordPath(record.Id), record);
         SaveState(record.Id, new SessionState(false, null, record.WorkingDirectory, DateTimeOffset.UtcNow));
     }
 
     public void SaveState(string id, SessionState state)
     {
-        Directory.CreateDirectory(SessionDirectory(id));
+        EnsurePrivateDirectory(SessionDirectory(id));
         lock (_stateLocks.GetOrAdd(id, static _ => new object()))
             WriteJsonAtomically(StatePath(id), state);
     }
@@ -68,7 +88,8 @@ public sealed class SessionStore
 
     public IReadOnlyList<SessionRecord> ListLive()
     {
-        Directory.CreateDirectory(_root);
+        if (OperatingSystem.IsLinux()) EnsurePrivateDirectory(_root);
+        else Directory.CreateDirectory(_root);
         var live = new List<SessionRecord>();
         foreach (var directory in Directory.EnumerateDirectories(_root))
         {
@@ -122,6 +143,8 @@ public sealed class SessionStore
     public string AllocateId()
     {
         var identity = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(_root))))[..16];
+        if (OperatingSystem.IsLinux())
+            return AllocateLinuxId(identity);
         using var mutex = new Mutex(false, $"Local\\Hitch.SessionIds.{identity}");
         var acquired = false;
         try
@@ -150,6 +173,53 @@ public sealed class SessionStore
         {
             if (acquired)
                 mutex.ReleaseMutex();
+        }
+    }
+
+    [SupportedOSPlatform("linux")]
+    private string AllocateLinuxId(string identity)
+    {
+        EnsurePrivateDirectory(_root);
+        var lockPath = Path.Combine(_root, $".ids-{identity}.lock");
+        lock (LinuxIdLocks.GetOrAdd(lockPath, static _ => new object()))
+        {
+            using var file = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite);
+            File.SetUnixFileMode(lockPath, PrivateFileMode);
+            var locked = false;
+            try
+            {
+                var deadline = DateTime.UtcNow.AddSeconds(5);
+                while (!locked)
+                {
+                    try { file.Lock(0, 1); locked = true; }
+                    catch (IOException) when (DateTime.UtcNow < deadline) { Thread.Sleep(25); }
+                }
+                _ = ListLive();
+                var id = 1;
+                while (Directory.Exists(SessionDirectory(id.ToString())))
+                    id++;
+                var sessionId = id.ToString();
+                EnsurePrivateDirectory(SessionDirectory(sessionId));
+                return sessionId;
+            }
+            finally
+            {
+                if (locked)
+                    file.Unlock(0, 1);
+            }
+        }
+    }
+
+    private static void EnsurePrivateDirectory(string path)
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            Directory.CreateDirectory(path, PrivateDirectoryMode);
+            File.SetUnixFileMode(path, PrivateDirectoryMode);
+        }
+        else
+        {
+            Directory.CreateDirectory(path);
         }
     }
 
@@ -191,6 +261,8 @@ public sealed class SessionStore
             _ => throw new NotSupportedException($"Session JSON type {typeof(T)} is not registered.")
         };
         File.WriteAllText(temporary, JsonSerializer.Serialize(value, typeInfo));
+        if (OperatingSystem.IsLinux())
+            File.SetUnixFileMode(temporary, PrivateFileMode);
         File.Move(temporary, path, overwrite: true);
     }
 

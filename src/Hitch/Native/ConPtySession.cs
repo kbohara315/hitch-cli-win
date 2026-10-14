@@ -5,7 +5,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace Hitch.Native;
 
-public interface IConPtySession : IAsyncDisposable
+public interface IManagedTerminalSession : IAsyncDisposable
 {
     int ProcessId { get; }
     bool HasExited { get; }
@@ -17,7 +17,7 @@ public interface IConPtySession : IAsyncDisposable
     void ClosePseudoConsole();
 }
 
-public sealed class ConPtySession : IConPtySession
+public sealed class ConPtySession : IManagedTerminalSession
 {
     private IntPtr _pseudoConsole;
     private readonly FileStream _input;
@@ -46,6 +46,8 @@ public sealed class ConPtySession : IConPtySession
         short rows,
         bool redirectStandardOutput = true)
     {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("ConPTY is available only on Windows.");
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763))
             throw new PlatformNotSupportedException("Hitch requires Windows 10 version 1809 or later (ConPTY).");
 

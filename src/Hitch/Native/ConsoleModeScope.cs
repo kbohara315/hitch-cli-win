@@ -26,13 +26,20 @@ public sealed class ConsoleModeScope : IDisposable
             _restoreOutput = SetConsoleMode(_output, GetVirtualTerminalOutputMode(_originalOutputMode));
     }
 
-    public static ConsoleModeScope Enter() => new();
+    public static IDisposable Enter() => OperatingSystem.IsWindows()
+        ? new ConsoleModeScope()
+        : OperatingSystem.IsLinux() ? LinuxTerminalModeScope.Enter()
+        : throw new PlatformNotSupportedException("Hitch terminal sessions support Windows and Linux only.");
 
     public static uint GetVirtualTerminalOutputMode(uint originalMode) =>
         originalMode | EnableProcessedOutput | EnableVirtualTerminalProcessing | DisableNewlineAutoReturn;
 
     public static (short Columns, short Rows) GetSize()
     {
+        if (OperatingSystem.IsLinux())
+            return LinuxTerminalModeScope.GetSize();
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("Hitch terminal sessions support Windows and Linux only.");
         var output = GetStdHandle(StdOutputHandle);
         if (GetConsoleScreenBufferInfo(output, out var info))
             return ((short)Math.Max(1, info.Window.Right - info.Window.Left + 1),

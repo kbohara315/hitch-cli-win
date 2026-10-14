@@ -1,6 +1,6 @@
 ---
 name: hitch
-description: Inspect and operate a user's Hitch shared sessions on Windows. Use when asked to collaborate in a managed shell, inspect a running command, send shell input, capture output, or manage a long-running process the user wants to share.
+description: Inspect and operate a user's Hitch shared sessions on Windows or Linux x64. Use when asked to collaborate in a managed shell, inspect a running command, send shell input, capture output, or manage a long-running process the user wants to share.
 ---
 
 # Hitch shared sessions
@@ -9,8 +9,8 @@ Use Hitch when the user wants to share shell work or when inspecting an existing
 
 ## Terms
 
-- A **shared session** is a Hitch-managed shell and its input/output, available to the user and Hitch commands run by that same Windows user.
-- A **managed shell** is the nested PowerShell or Command Prompt process Hitch starts and supervises.
+- A **shared session** is a Hitch-managed shell and its input/output, available to the user and Hitch commands run by that same operating-system user.
+- A **managed shell** is the nested PowerShell/Command Prompt process on Windows or Bash process on Linux that Hitch starts and supervises.
 - A **Session ID** selects one of the user's concurrent shared sessions. Discover it; do not guess it or call it a terminal number.
 
 ## Workflow
@@ -24,7 +24,7 @@ Use Hitch when the user wants to share shell work or when inspecting an existing
    hitch send-keys -t 2 "dotnet test Hitch.sln" Enter
    ```
 
-   ```cmd
+   ```sh
    hitch send-keys -t 3 "echo ready" Enter
    ```
 
@@ -37,8 +37,8 @@ Use Hitch when the user wants to share shell work or when inspecting an existing
 - Control keys such as `C-c` can interrupt a process. Send them only when the user requests an interrupt or it is clearly necessary to stop work.
 - Do not send commands to an unknown or unrelated session. Check `hitch status` and `hitch context <Session ID>` first.
 - `hitch off` applies to the current managed shell; use `hitch kill <Session ID>` to select a different session.
-- Shell integration syncs the managed shell's final working directory back to the invoking shell. Directly launching `hitch.exe on` bypasses that wrapper behavior.
+- Shell integration syncs the managed shell's final working directory back to the invoking shell. Directly launching `hitch.exe on` on Windows or `hitch on` outside the Bash function bypasses that wrapper behavior.
 
 ## If Hitch reports no session
 
-Run `hitch status` and use the Session ID it prints. If no shared session is listed, ask the user to start one with `hitch` or `hitch on` in PowerShell or Command Prompt. Do not substitute unsupported options such as `context --all`, `send-keys --wait`, or `capture-pane`.
+Run `hitch status` and use the Session ID it prints. If no shared session is listed, ask the user to start one with `hitch` or `hitch on` in PowerShell, Command Prompt, or Bash. Do not substitute unsupported options such as `context --all`, `send-keys --wait`, or `capture-pane`.

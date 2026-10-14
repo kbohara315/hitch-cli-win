@@ -14,7 +14,9 @@ public sealed class SessionPipeServerTests
         var root = Path.Combine(Path.GetTempPath(), "hitch-pipe-test-" + Guid.NewGuid().ToString("N"));
         var store = new SessionStore(root);
         var id = "pipe-session";
-        var pipeName = "hitch-test-" + Guid.NewGuid().ToString("N");
+        var pipeName = OperatingSystem.IsLinux()
+            ? Path.Combine(root, "control.sock")
+            : "hitch-test-" + Guid.NewGuid().ToString("N");
         var fakeShell = new FakeConPtySession();
         var processStart = Process.GetCurrentProcess().StartTime.ToUniversalTime();
         store.Save(new SessionRecord(id, Environment.ProcessId, "cmd.exe", root, pipeName,
@@ -59,7 +61,7 @@ public sealed class SessionPipeServerTests
         }
     }
 
-    private sealed class FakeConPtySession : IConPtySession
+    private sealed class FakeConPtySession : IManagedTerminalSession
     {
         public int ProcessId => Environment.ProcessId;
         public bool HasExited => false;

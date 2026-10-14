@@ -6,7 +6,7 @@ namespace Hitch.Tests;
 
 public sealed class SessionStopIntegrationTests
 {
-    [Fact]
+    [WindowsFact]
     public async Task ManagedStopPathsEndTheHostWithoutReturningToTheManagedPrompt()
     {
         var hitch = FindHitchExecutable();
@@ -79,10 +79,13 @@ public sealed class SessionStopIntegrationTests
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null)
         {
-            var candidate = Path.Combine(directory.FullName, "src", "Hitch", "bin", "Debug",
-                "net10.0-windows10.0.17763.0", "win-x64", "hitch.exe");
-            if (File.Exists(candidate))
-                return candidate;
+            var output = Path.Combine(directory.FullName, "src", "Hitch", "bin");
+            if (Directory.Exists(output))
+            {
+                var candidate = Directory.GetFiles(output, "hitch.exe", SearchOption.AllDirectories)
+                    .FirstOrDefault(path => path.Contains($"{Path.DirectorySeparatorChar}win-x64{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase));
+                if (candidate is not null) return candidate;
+            }
             directory = directory.Parent;
         }
         throw new FileNotFoundException("Could not locate the Hitch apphost for session stop integration tests.");

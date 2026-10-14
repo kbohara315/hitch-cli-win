@@ -7,6 +7,23 @@ public sealed record ManagedShell(string Executable, string Arguments)
 {
     public static ManagedShell Resolve(string? requested)
     {
+        if (OperatingSystem.IsLinux())
+        {
+            var linuxCandidate = requested ?? Environment.GetEnvironmentVariable("HITCH_SHELL") ?? "bash";
+            var linuxExecutable = ResolveExecutable(linuxCandidate);
+            var linuxShellName = Path.GetFileName(linuxExecutable);
+            var linuxArguments = linuxShellName switch
+            {
+                "bash" => "--noprofile -i",
+                "zsh" => "-f -i",
+                "fish" => "--no-config -i",
+                _ => "-i"
+            };
+            return new ManagedShell(linuxExecutable, linuxArguments);
+        }
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("Hitch shell selection supports Windows and Linux only.");
+
         var candidate = requested
             ?? Environment.GetEnvironmentVariable("HITCH_SHELL")
             ?? FindInvokingShell()

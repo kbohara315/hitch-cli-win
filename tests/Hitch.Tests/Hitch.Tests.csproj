@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <IsPackable>false</IsPackable>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -14,4 +14,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Hitch\Hitch.csproj" />
   </ItemGroup>
+  <Target Name="CopyLinuxPtyHelper" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)/../../src/Hitch/bin/$(Configuration)/net10.0/linux-x64/hitch-pty" DestinationFolder="$(TargetDir)" />
+    <Exec Command="chmod 755 &quot;$(TargetDir)hitch-pty&quot;" />
+  </Target>
 </Project>

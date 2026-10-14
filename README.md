@@ -1,19 +1,24 @@
-# Hitch for Windows
+# Hitch
 
-A Windows-first C# implementation of Hitch’s shared-session model. Hitch launches a nested PowerShell or Command Prompt in a ConPTY session, mirrors the managed shell to the invoking terminal, and exposes same-user agent commands over an ACL-restricted named pipe.
+A cross-platform C# implementation of Hitch’s shared-session model. Hitch launches a managed shell in a PTY, mirrors its input/output to the invoking terminal, and exposes same-user agent commands over local IPC. Windows uses ConPTY and an ACL-restricted named pipe; Linux x64 uses a `forkpty` helper, Bash, and a private Unix-domain socket.
 
 ## Requirements
 
 - Windows 10 version 1809 (build 17763) or newer
+- Linux x64 with Bash and `stty` (coreutils)
 - .NET 10 SDK to build
-- Windows x64 for the initial release target
+- Windows x64 and Linux x64 release targets
+
+See [installation-linux.md](installation-linux.md) for Linux installation and setup. Windows installation remains documented in [installation.md](installation.md).
 
 ## Build and test
 
-```powershell
+```sh
 dotnet build Hitch.sln
 dotnet test Hitch.sln
 ```
+
+Linux x64 builds compile the included `src/Hitch/Native/hitch-pty.c` helper with `cc` and link libutil. The `hitch-pty` executable must remain alongside `hitch`; Linux packages and `hitch setup` install both files together.
 
 ## Publish for Windows x64
 
@@ -26,6 +31,14 @@ dotnet publish src/Hitch/Hitch.csproj -c Release -r win-x64 --self-contained tru
 ```
 
 The output is `artifacts/publish-standard/hitch.exe`.
+
+Publish the Linux x64 package on Linux (the helper is compiled during publish):
+
+```bash
+dotnet publish src/Hitch/Hitch.csproj -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -o artifacts/linux-x64
+```
+
+The output includes `hitch` and its required `hitch-pty` sidecar. Build or publish this target on Linux; cross-publishing it from Windows is unsupported and fails with a build error rather than producing an incomplete package. Linux runtime support currently targets x64 and Bash; macOS, Linux ARM64, and other shells are outside this first release.
 
 Publish the Native AOT executable using the dedicated profile:
 
@@ -53,7 +66,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "`$script = (Invoke-W
 
 The installer downloads the latest Native AOT release and its SHA256 checksum from GitHub, verifies the executable, then installs it for the current user under `%LOCALAPPDATA%\Hitch`. It configures the existing PowerShell profiles, CMD wrapper, and user PATH, preserving backups. No .NET installation or administrator access is needed. Open a fresh PowerShell or Command Prompt window and type `hitch`.
 
-Releases are created by pushing a `v*` version tag; CI publishes `hitch.exe` and `hitch.exe.sha256`.
+Linux x64 users can install with the script in [installation-linux.md](installation-linux.md). Releases are created by pushing a `v*` version tag; CI publishes `hitch.exe` and its checksum plus `hitch-linux-x64.tar.gz` and its checksum.
 
 ## Try it
 
@@ -91,8 +104,8 @@ npx skills add kbohara315/hitch-cli-win --skill hitch --agent opencode
 
 Omit `--agent opencode` to let the CLI detect installed agents, or add `--global` to install the skill for your user instead of the current project.
 
-Session metadata and bounded transcripts are stored under `%LOCALAPPDATA%\Hitch\sessions` while active, then removed when the managed shell ends. Dead session directories are pruned the next time Hitch lists sessions.
+Session metadata and bounded transcripts are stored under `%LOCALAPPDATA%\Hitch\sessions` on Windows. Linux uses `$XDG_RUNTIME_DIR/hitch/sessions`, falling back to `$XDG_STATE_HOME/hitch/sessions` or `~/.local/state/hitch/sessions`. Active data is removed when the managed shell ends; dead session directories are pruned the next time Hitch lists sessions.
 
-## Current implementation boundary
+## Platform support
 
-The native ConPTY adapter, per-session host loop, terminal byte forwarding/resizing, current-user named-pipe protocol, session files, command/context/capture commands, guarded `send-keys`, shell setup, and cleanup path are implemented. This is an initial vertical slice; detailed parity features such as alternate-screen filtering and richer wait modes remain follow-up work.
+Windows sessions use PowerShell or Command Prompt inside ConPTY. Linux sessions use an interactive Bash child hosted by a small native `forkpty` helper; terminal resize, Ctrl-C, session stop, same-user IPC, cwd markers, and process-group cleanup are supported. Session metadata and sockets are private to the current user. macOS and Linux ARM64 are not supported yet.
