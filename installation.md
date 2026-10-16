@@ -29,7 +29,7 @@ Review the prompt and enter `y` to continue. Setup then:
 3. Adds the Hitch function to the Windows PowerShell 5.1 and PowerShell 7 profile files, preserving other profile content.
 4. Backs up files it replaces under `%LOCALAPPDATA%\Hitch\backups` and records the previous user PATH there if it changes it.
 
-Setup does not require administrator access. Restart open PowerShell and CMD windows after setup so they load the updated profile and PATH. The installer does not install the optional agent skill; `hitch --skill` prints the built-in agent instructions.
+Setup does not require administrator access. It broadcasts the PATH change to Windows. Restart open PowerShell and CMD windows after setup so they load the updated profile and PATH. Processes that were already running keep their old PATH; restart Windows Terminal or the IDE/agent host that launched the shell if `hitch` is still not recognized. The installer does not install the optional agent skill; `hitch --skill` prints the built-in agent instructions.
 
 ## Verify the installation
 

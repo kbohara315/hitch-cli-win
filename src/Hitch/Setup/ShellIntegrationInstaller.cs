@@ -5,11 +5,21 @@ public sealed class ShellIntegrationInstaller
     private const string StartMarker = "# >>> hitch shell integration >>>";
     private const string EndMarker = "# <<< hitch shell integration <<<";
     private readonly string _root;
+    private readonly string _documentsDirectory;
+    private readonly Action<string> _addUserPath;
+    private readonly Action _notifyEnvironmentChanged;
 
-    public ShellIntegrationInstaller(string? root = null)
+    public ShellIntegrationInstaller(
+        string? root = null,
+        string? documentsDirectory = null,
+        Action<string>? addUserPath = null,
+        Action? notifyEnvironmentChanged = null)
     {
         _root = root ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Hitch");
+        _documentsDirectory = documentsDirectory ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        _addUserPath = addUserPath ?? AddUserPath;
+        _notifyEnvironmentChanged = notifyEnvironmentChanged ?? BroadcastEnvironmentChanged;
     }
 
     public async Task<bool> InstallAsync(string? executablePath = null, CancellationToken cancellationToken = default)
@@ -33,11 +43,10 @@ public sealed class ShellIntegrationInstaller
         BackupIfPresent(installedExecutable);
         File.Copy(executable, installedExecutable, overwrite: true);
 
-        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
         var profiles = new[]
         {
-            Path.Combine(documents, "PowerShell", "Microsoft.PowerShell_profile.ps1"),
-            Path.Combine(documents, "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1")
+            Path.Combine(_documentsDirectory, "PowerShell", "Microsoft.PowerShell_profile.ps1"),
+            Path.Combine(_documentsDirectory, "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1")
         };
         foreach (var profile in profiles)
             InstallPowerShellProfile(profile, installedExecutable);
@@ -45,7 +54,8 @@ public sealed class ShellIntegrationInstaller
         var commandWrapper = Path.Combine(binDirectory, "hitch.cmd");
         BackupIfPresent(commandWrapper);
         await File.WriteAllTextAsync(commandWrapper, CreateCommandWrapper(installedExecutable), cancellationToken);
-        AddUserPath(binDirectory);
+        _addUserPath(binDirectory);
+        _notifyEnvironmentChanged();
         Console.WriteLine("Shell integration installed. Restart open PowerShell/CMD windows before using the cwd-sync wrappers.");
         return true;
     }
@@ -127,6 +137,25 @@ public sealed class ShellIntegrationInstaller
         File.WriteAllText(Path.Combine(backupDirectory, $"user-path-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}.txt"), oldPath);
         Environment.SetEnvironmentVariable("PATH", string.Join(Path.PathSeparator, new[] { directory }.Concat(entries)), EnvironmentVariableTarget.User);
     }
+
+    private static void BroadcastEnvironmentChanged()
+    {
+        const int HwndBroadcast = 0xffff;
+        const uint WmSettingChange = 0x001a;
+        const uint SmtoAbortIfHung = 0x0002;
+        _ = SendMessageTimeout(new IntPtr(HwndBroadcast), WmSettingChange, IntPtr.Zero, "Environment",
+            SmtoAbortIfHung, 5000, out _);
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr SendMessageTimeout(
+        IntPtr windowHandle,
+        uint message,
+        IntPtr wParam,
+        string lParam,
+        uint flags,
+        uint timeoutMilliseconds,
+        out IntPtr result);
 
     private void BackupIfPresent(string path)
     {
